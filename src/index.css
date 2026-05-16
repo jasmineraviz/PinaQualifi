@@ -1,0 +1,212 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&family=Playfair+Display:wght@700&display=swap');
+
+:root {
+    --lpmpc-green: #468432;
+    --lpmpc-gold: #ffd700;
+    --lpmpc-light-yellow: #FFEF91;
+    --text-dark: #1e1e24;
+}
+
+/* --- BASE STYLES --- */
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    overflow-x: hidden;
+    font-family: 'Montserrat', sans-serif;
+    color: var(--text-dark);
+    background-color: #ffffff;
+}
+
+header {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    z-index: 1000;
+}
+
+main { margin-top: 70px; }
+section { padding: 80px 0; }
+h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
+
+/* --- REVEAL ANIMATIONS (Marketplace) --- */
+.reveal {
+    opacity: 0;
+    transition: all 1.2s cubic-bezier(0.17, 0.85, 0.438, 1);
+}
+.reveal-left { transform: translateX(-80px); }
+.reveal-right { transform: translateX(80px); }
+.reveal-up { transform: translateY(50px); }
+.reveal.active {
+    opacity: 1;
+    transform: translate(0, 0);
+}
+
+/* --- NAVBAR STYLES --- */
+.navbar {
+    background-color: var(--lpmpc-green) !important;
+    border-bottom: 4px solid var(--lpmpc-gold);
+    width: 100%;
+}
+.nav-link { color: #ffffff !important; transition: 0.3s; }
+.nav-link:hover { color: var(--lpmpc-light-yellow) !important; }
+
+/* --- HOME SECTION FIX --- */
+.home-section {
+    background-color: var(--lpmpc-light-yellow);
+    padding: 120px 0;
+    width: 100%;
+    margin: 0;
+    clip-path: ellipse(150% 100% at 50% 0%);
+    text-align: center;
+    position: relative;
+}
+
+/* --- CARD STYLES --- */
+.card {
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    border: 1px solid #eee !important;
+    border-radius: 15px;
+    overflow: hidden;
+}
+.card:hover {
+    transform: translateY(-12px);
+    box-shadow: 0 15px 30px rgba(0,0,0,0.1) !important;
+}
+
+/* --- ADMIN LAYOUT CORE (Desktop Default) --- */
+.admin-tab-btn {
+    width: 100%;
+    background: none;
+    border: none;
+    color: white;
+    text-align: left;
+    padding: 15px 25px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-left: 4px solid transparent;
+    text-transform: uppercase;
+    outline: none !important; /* Tinatanggal ang default browser blue/white glow */
+    box-shadow: none !important; /* Sinisiguradong walang anino */
+    transition: color 0.3s ease;
+}
+
+/* Kapag Active ang Tab */
+.admin-tab-btn.active {
+    background: transparent !important; /* Tinanggal ang puti/lighter green na background */
+    color: var(--lpmpc-gold) !important; /* Ginawang gold ang icon/text para litaw */
+    border-left: 4px solid var(--lpmpc-gold);
+}
+
+/* Static rules for Admin to prevent lag */
+.admin-layout .card,
+.admin-layout .card:hover,
+.admin-layout .btn,
+.admin-layout .admin-tab-btn,
+.admin-layout .vis-item,
+.admin-layout .reveal {
+    transition: none !important;
+    transform: none !important;
+    animation: none !important;
+    opacity: 1 !important;
+    border-radius: 0 !important;
+}
+
+/* --- VISUALIZATION / TIMELINE --- */
+#visualization {
+    min-height: 450px !important;
+    height: auto !important;
+    border: 1px solid #ddd !important;
+    background: #fff;
+    overflow: hidden;
+}
+.vis-item { font-weight: 700 !important; border-radius: 0 !important; }
+.bar-veg { background-color: #a3c19a !important; color: #1e3d14 !important; }
+.bar-flow { background-color: var(--lpmpc-gold) !important; color: #000 !important; }
+
+/* --- UNIVERSAL RESPONSIVE FIX (Lahat ng screen mas maliit sa 992px) --- */
+@media (max-width: 991.98px) {
+    /* Gawing Top Header ang Sidebar */
+    nav.bg-lpmpc-green.vh-100 {
+        width: 100% !important;
+        height: 60px !important;
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 0 15px !important;
+        z-index: 2000 !important;
+        border-bottom: 3px solid var(--lpmpc-gold) !important;
+    }
+
+    /* LPMPC Logo sa Left */
+    nav .p-4.border-bottom {
+        padding: 0 !important;
+        border: none !important;
+        display: flex !important;
+        align-items: center !important;
+        width: auto !important;
+    }
+
+    nav .p-4.border-bottom h4 {
+        font-size: 1rem !important;
+        margin: 0 !important;
+        display: block !important;
+        white-space: nowrap;
+    }
+
+    /* Icons sa Right */
+    nav .nav {
+        flex-direction: row !important;
+        margin-top: 0 !important;
+        height: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 2px !important;
+    }
+
+    .admin-tab-btn.active {
+            background: transparent !important;
+            border-left: none !important;
+            position: relative;
+        }
+
+        .admin-tab-btn.active::after {
+            content: "";
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background-color: var(--lpmpc-gold);
+        }
+
+    /* Content Adjustment */
+    main.offset-md-3, main.offset-lg-2, .admin-layout main {
+        margin-left: 0 !important;
+        margin-top: 60px !important;
+        width: 100% !important;
+        padding: 15px !important;
+    }
+}
+
+/* Extra small devices fix */
+@media (max-width: 360px) {
+    nav .p-4.border-bottom h4 { display: none !important; }
+}
+
+/* --- UTILITIES --- */
+.lpmpc-green { color: var(--lpmpc-green) !important; }
+.bg-lpmpc-green { background-color: var(--lpmpc-green) !important; }
+.text-gold { color: var(--lpmpc-gold) !important; }
+.pulse { animation: pulse-soft 2s infinite ease-in-out; }
+@keyframes pulse-soft {
+    0%, 100% { transform: scale(0.98); opacity: 0.8; }
+    50% { transform: scale(1); opacity: 1; }
+}
