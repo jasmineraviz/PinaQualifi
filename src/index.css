@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&family=Playfair+Display:wght@700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Playfair+Display:wght@700&display=swap');
 
 :root {
     --lpmpc-green: #468432;
@@ -18,6 +18,12 @@ html, body {
     background-color: #ffffff;
 }
 
+/* Specific body fallback for admin background if using layout wrapper */
+.admin-layout-wrapper {
+    background-color: #fcfcfc;
+    min-height: 100vh;
+}
+
 header {
     position: fixed;
     top: 0;
@@ -25,7 +31,10 @@ header {
     z-index: 1000;
 }
 
-main { margin-top: 70px; }
+main {
+    margin-top: 70px;
+    transition: all 0.3s ease;
+}
 section { padding: 80px 0; }
 h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
 
@@ -48,10 +57,12 @@ h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
     border-bottom: 4px solid var(--lpmpc-gold);
     width: 100%;
 }
+.navbar-toggler { border-color: rgba(255, 255, 255, 0.5) !important; }
+.navbar-toggler-icon { filter: invert(1); }
 .nav-link { color: #ffffff !important; transition: 0.3s; }
 .nav-link:hover { color: var(--lpmpc-light-yellow) !important; }
 
-/* --- HOME SECTION FIX --- */
+/* --- HOME & ABOUT SECTIONS --- */
 .home-section {
     background-color: var(--lpmpc-light-yellow);
     padding: 120px 0;
@@ -61,6 +72,7 @@ h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
     text-align: center;
     position: relative;
 }
+#about { background-color: var(--lpmpc-light-yellow) !important; }
 
 /* --- CARD STYLES --- */
 .card {
@@ -73,6 +85,67 @@ h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
     transform: translateY(-12px);
     box-shadow: 0 15px 30px rgba(0,0,0,0.1) !important;
 }
+
+/* --- MARKETPLACE UNIQUE BUTTONS & CARDS --- */
+.btn-custom-green {
+    background-color: var(--lpmpc-green);
+    color: white;
+    border-radius: 8px;
+    font-weight: bold;
+    padding: 12px;
+    border: none;
+}
+.btn-outline-login_signup {
+    color: white;
+    border: 2px solid var(--lpmpc-gold);
+    background: transparent;
+}
+.contact-info-card {
+    background: #fdfdfd;
+    border-left: 5px solid var(--lpmpc-green) !important;
+}
+.farmer-notice {
+    background-color: #f1f8ee;
+    border: 1px dashed var(--lpmpc-green);
+}
+footer {
+    background-color: var(--lpmpc-green);
+    color: white;
+    padding: 40px 0;
+}
+
+/* --- MODERN AUTH MODAL STYLES --- */
+.auth-modal-content {
+    border-radius: 20px;
+    overflow: hidden;
+    border: none;
+}
+.auth-side-panel {
+    background: linear-gradient(135deg, var(--lpmpc-green) 0%, #2d5a1e 100%);
+    color: white;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.form-floating > .form-control:focus {
+    border-color: var(--lpmpc-green);
+    box-shadow: 0 0 0 0.25rem rgba(70, 132, 50, 0.15);
+}
+.auth-toggle-btn {
+    color: var(--lpmpc-green);
+    text-decoration: none;
+    font-weight: 600;
+    transition: 0.2s;
+    cursor: pointer;
+}
+.auth-toggle-btn:hover { color: var(--lpmpc-gold); }
+.input-group-text {
+    background: transparent;
+    border-left: none;
+    cursor: pointer;
+}
+.password-input { border-right: none; }
 
 /* --- ADMIN LAYOUT CORE (Desktop Default) --- */
 .admin-tab-btn {
@@ -89,19 +162,23 @@ h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
     gap: 12px;
     border-left: 4px solid transparent;
     text-transform: uppercase;
-    outline: none !important; /* Tinatanggal ang default browser blue/white glow */
-    box-shadow: none !important; /* Sinisiguradong walang anino */
-    transition: color 0.3s ease;
+    outline: none !important;
+    box-shadow: none !important;
+    transition: 0.3s;
+    opacity: 0.7;
 }
-
-/* Kapag Active ang Tab */
+.admin-tab-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+}
 .admin-tab-btn.active {
-    background: transparent !important; /* Tinanggal ang puti/lighter green na background */
-    color: var(--lpmpc-gold) !important; /* Ginawang gold ang icon/text para litaw */
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: var(--lpmpc-gold) !important;
     border-left: 4px solid var(--lpmpc-gold);
+    opacity: 1;
 }
 
-/* Static rules for Admin to prevent lag */
+/* Static rules for Admin layout to ensure performance & consistency */
 .admin-layout .card,
 .admin-layout .card:hover,
 .admin-layout .btn,
@@ -115,6 +192,21 @@ h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
     border-radius: 0 !important;
 }
 
+.admin-layout .card {
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Admin Dashboard Specific Data Table Controls */
+.action-icon-btn {
+    background: none;
+    border: none;
+    padding: 4px;
+    transition: opacity 0.2s;
+}
+.action-icon-btn:hover { opacity: 0.6; }
+.text-icon-green { color: #2e7d32 !important; }
+.text-icon-red { color: #d32f2f !important; }
+
 /* --- VISUALIZATION / TIMELINE --- */
 #visualization {
     min-height: 450px !important;
@@ -127,9 +219,15 @@ h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
 .bar-veg { background-color: #a3c19a !important; color: #1e3d14 !important; }
 .bar-flow { background-color: var(--lpmpc-gold) !important; color: #000 !important; }
 
-/* --- UNIVERSAL RESPONSIVE FIX (Lahat ng screen mas maliit sa 992px) --- */
+/* --- UNIVERSAL RESPONSIVE FIX --- */
+@media (min-width: 992px) {
+    main.offset-lg-2 {
+        margin-left: 16.666667% !important;
+        width: 83.333333% !important;
+    }
+}
+
 @media (max-width: 991.98px) {
-    /* Gawing Top Header ang Sidebar */
     nav.bg-lpmpc-green.vh-100 {
         width: 100% !important;
         height: 60px !important;
@@ -144,8 +242,6 @@ h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
         z-index: 2000 !important;
         border-bottom: 3px solid var(--lpmpc-gold) !important;
     }
-
-    /* LPMPC Logo sa Left */
     nav .p-4.border-bottom {
         padding: 0 !important;
         border: none !important;
@@ -153,15 +249,12 @@ h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
         align-items: center !important;
         width: auto !important;
     }
-
     nav .p-4.border-bottom h4 {
         font-size: 1rem !important;
         margin: 0 !important;
         display: block !important;
         white-space: nowrap;
     }
-
-    /* Icons sa Right */
     nav .nav {
         flex-direction: row !important;
         margin-top: 0 !important;
@@ -170,29 +263,32 @@ h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
         align-items: center !important;
         gap: 2px !important;
     }
-
     .admin-tab-btn.active {
-            background: transparent !important;
-            border-left: none !important;
-            position: relative;
-        }
-
-        .admin-tab-btn.active::after {
-            content: "";
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background-color: var(--lpmpc-gold);
-        }
-
-    /* Content Adjustment */
+        background: transparent !important;
+        border-left: none !important;
+        position: relative;
+    }
+    .admin-tab-btn.active::after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background-color: var(--lpmpc-gold);
+    }
     main.offset-md-3, main.offset-lg-2, .admin-layout main {
         margin-left: 0 !important;
         margin-top: 60px !important;
         width: 100% !important;
         padding: 15px !important;
+    }
+    .navbar-collapse {
+        background-color: var(--lpmpc-green);
+        padding: 1rem;
+        border-radius: 0 0 15px 15px;
+        margin-top: 10px;
+        border: 1px solid var(--lpmpc-gold);
     }
 }
 

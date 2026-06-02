@@ -6,10 +6,7 @@ function App() {
   return (
     <Router>
       <Routes>
-        {/* Ito yung landing page / shop */}
         <Route path="/" element={<AdminDashboard />} />
-
-        {/* Ito yung dashboard (e.g., localhost:5173/admin) */}
         <Route path="/shop" element={<MarketPlace />} />
       </Routes>
     </Router>
