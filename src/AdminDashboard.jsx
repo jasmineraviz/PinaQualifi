@@ -77,6 +77,15 @@ const AdminDashboard = () => {
         o.order_status !== 'Rejected' &&
         o.order_status !== 'Cancelled'
     );
+    const paidOrders = supabaseOrders.filter(o => o.order_status === 'Received');
+    const unpaidOrders = supabaseOrders.filter(o =>
+        o.order_status !== 'Received' &&
+        o.order_status !== 'Rejected' &&
+        o.order_status !== 'Cancelled'
+    );
+    const totalPaidAmount = paidOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+    const totalUnpaidAmount = unpaidOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+    const totalSalesOrdersCount = supabaseOrders.filter(o => o.order_status !== 'Cancelled' && o.order_status !== 'Rejected').length;
 
     // LIVE WIDGETS COUNTER MATRIX
     const pendingCount = cardPendingOrders.length;
@@ -240,13 +249,24 @@ const AdminDashboard = () => {
             gradient.addColorStop(0, 'rgba(70, 132, 50, 0.2)');
             gradient.addColorStop(1, 'rgba(70, 132, 50, 0)');
 
+            const monthlyData = Array(6).fill(0);
+            supabaseOrders.forEach(order => {
+                if (order.order_status === 'Received') {
+                    const date = new Date(order.created_at);
+                    const monthIndex = date.getMonth();
+                    if (monthIndex >= 0 && monthIndex < 6) {
+                        monthlyData[monthIndex] += Number(order.total_amount) || 0;
+                    }
+                }
+            });
+
             salesChartRef.current = new Chart(salesChartCanvas.current, {
                 type: 'line',
                 data: {
                     labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
                     datasets: [{
                         label: 'Income (₱)',
-                        data: [12000, 19000, 15000, 25000, 22000, 30000],
+                        data: monthlyData,
                         borderColor: '#468432',
                         backgroundColor: gradient,
                         fill: true,
@@ -273,6 +293,23 @@ const AdminDashboard = () => {
             if (salesChartRef.current) { salesChartRef.current.destroy(); salesChartRef.current = null; }
         };
     }, [activeTab]);
+
+    useEffect(() => {
+        if (salesChartRef.current) {
+            const monthlyData = Array(6).fill(0);
+            supabaseOrders.forEach(order => {
+                if (order.order_status === 'Received') {
+                    const date = new Date(order.created_at);
+                    const monthIndex = date.getMonth();
+                    if (monthIndex >= 0 && monthIndex < 6) {
+                        monthlyData[monthIndex] += Number(order.total_amount) || 0;
+                    }
+                }
+            });
+            salesChartRef.current.data.datasets[0].data = monthlyData;
+            salesChartRef.current.update();
+        }
+    }, [supabaseOrders]);
 
     useEffect(() => {
         if (activeTab === 'v-farm' && timelineRef.current) {
@@ -335,7 +372,7 @@ const AdminDashboard = () => {
 
                             <div className="row g-3 mb-5">
                                 {[
-                                    { label: 'Total Sales', count: '₱37,500', color: '#468432' },
+                                    { label: 'Total Sales', count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`, color: '#468432' },
                                     { label: 'Active Farms', count: '4', color: '#b59a00' },
                                     { label: 'Current Market Orders', count: isLoading ? '...' : supabaseOrders.length, color: '#6c757d' }
                                 ].map((w, i) => (
@@ -927,9 +964,9 @@ const AdminDashboard = () => {
 
                             <div className="row g-3 mb-4">
                                 {[
-                                    { label: 'Total Revenue (Paid)', count: '₱37,500', color: '#468432' },
-                                    { label: 'Pending Receivables', count: '₱8,200', color: '#b59a00' },
-                                    { label: 'Total Orders', count: '03', color: '#6c757d' }
+                                    { label: 'Total Revenue (Paid)', count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`, color: '#468432' },
+                                    { label: 'Pending Receivables', count: isLoading ? '...' : `₱${totalUnpaidAmount.toLocaleString()}`, color: '#b59a00' },
+                                    { label: 'Total Orders', count: isLoading ? '...' : String(totalSalesOrdersCount).padStart(2, '0'), color: '#6c757d' }
                                 ].map((w, i) => (
                                     <div className="col-12 col-sm-4" key={i}>
                                         <div className="p-4 bg-white border border-light shadow-sm h-100 rounded-0 border-bottom border-3" style={{ borderBottom: `3px solid ${w.color}` }}>
@@ -990,23 +1027,30 @@ const AdminDashboard = () => {
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {[
-                                                        { id: 'ORD-001', date: 'May 08, 2026', client: 'Juan Dela Cruz', amount: '₱12,500.00' },
-                                                        { id: 'ORD-003', date: 'May 09, 2026', client: 'Bagasbas Cooperative', amount: '₱25,000.00' },
-                                                    ].map((sale, i) => (
-                                                        <tr key={i} className="border-bottom">
-                                                            <td className="fw-bold px-4 py-3">{sale.id}</td>
-                                                            <td className="text-muted">{sale.date}</td>
-                                                            <td>{sale.client}</td>
-                                                            <td className="text-end fw-bold px-4 py-3 text-success" style={{ color: '#468432' }}>{sale.amount}</td>
+                                                    {isLoading ? (
+                                                        <tr>
+                                                            <td colSpan="4" className="text-center py-4 text-muted small">Loading transactions...</td>
                                                         </tr>
-                                                    ))}
+                                                    ) : paidOrders.length > 0 ? (
+                                                        paidOrders.map((sale, i) => (
+                                                            <tr key={sale.id} className="border-bottom">
+                                                                <td className="fw-bold px-4 py-3">LPMPC-2026-{sale.id.slice(0, 3).toUpperCase()}</td>
+                                                                <td className="text-muted">{new Date(sale.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
+                                                                <td>{sale.customer_name}</td>
+                                                                <td className="text-end fw-bold px-4 py-3 text-success" style={{ color: '#468432' }}>₱{Number(sale.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                                            </tr>
+                                                        ))
+                                                    ) : (
+                                                        <tr>
+                                                            <td colSpan="4" className="text-center py-4 text-muted small">No paid transactions recorded.</td>
+                                                        </tr>
+                                                    )}
                                                 </tbody>
                                             </table>
                                         </div>
                                         <div className="p-3 text-end bg-light border-top">
                                             <small className="text-muted text-uppercase fw-bold me-2" style={{ fontSize: '10px' }}>Subtotal (Paid):</small>
-                                            <span className="fw-bold fs-5" style={{ color: '#468432' }}>₱37,500.00</span>
+                                            <span className="fw-bold fs-5" style={{ color: '#468432' }}>₱{totalPaidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                     </div>
                                 ) : (
@@ -1023,27 +1067,35 @@ const AdminDashboard = () => {
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {[
-                                                        { id: 'ORD-002', date: 'May 09, 2026', client: 'Maria Santos', status: 'Accepted', amount: '₱8,200.00' },
-                                                    ].map((sale, i) => (
-                                                        <tr key={i} className="border-bottom">
-                                                            <td className="fw-bold px-4 py-3">{sale.id}</td>
-                                                            <td className="text-muted">{sale.date}</td>
-                                                            <td>{sale.client}</td>
-                                                            <td>
-                                                                <span className="badge rounded-pill fw-normal border px-3" style={{ backgroundColor: '#fff9e6', color: '#b59a00', borderColor: '#ffeeba' }}>
-                                                                    {sale.status}
-                                                                </span>
-                                                            </td>
-                                                            <td className="text-end fw-bold px-4 py-3 text-danger">{sale.amount}</td>
+                                                    {isLoading ? (
+                                                        <tr>
+                                                            <td colSpan="5" className="text-center py-4 text-muted small">Loading transactions...</td>
                                                         </tr>
-                                                    ))}
+                                                    ) : unpaidOrders.length > 0 ? (
+                                                        unpaidOrders.map((sale, i) => (
+                                                            <tr key={sale.id} className="border-bottom">
+                                                                <td className="fw-bold px-4 py-3">LPMPC-2026-{sale.id.slice(0, 3).toUpperCase()}</td>
+                                                                <td className="text-muted">{new Date(sale.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
+                                                                <td>{sale.customer_name}</td>
+                                                                <td>
+                                                                    <span className="badge rounded-pill fw-normal border px-3" style={{ backgroundColor: '#fff9e6', color: '#b59a00', borderColor: '#ffeeba' }}>
+                                                                        {sale.order_status}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="text-end fw-bold px-4 py-3 text-danger">₱{Number(sale.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                                            </tr>
+                                                        ))
+                                                    ) : (
+                                                        <tr>
+                                                            <td colSpan="5" className="text-center py-4 text-muted small">No unpaid transactions pending.</td>
+                                                        </tr>
+                                                    )}
                                                 </tbody>
                                             </table>
                                         </div>
                                         <div className="p-3 text-end bg-light border-top">
                                             <small className="text-muted text-uppercase fw-bold me-2" style={{ fontSize: '10px' }}>Total Unpaid:</small>
-                                            <span className="fw-bold text-danger fs-5">₱8,200.00</span>
+                                            <span className="fw-bold text-danger fs-5">₱{totalUnpaidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                     </div>
                                 )}
