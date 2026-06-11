@@ -14,6 +14,15 @@ const AdminDashboard = () => {
     const [activeTab, setActiveTab] = useState('v-dash');
     const [dateStr, setDateStr] = useState('');
     const [salesView, setSalesView] = useState('paid');
+    const [bastosChartData, setBastosChartData] = useState({ labels: [], values: [] });
+
+    const colorMap = {
+        'PID-1': '#468432',
+        'PID-2': '#5da441',
+        'PID-3': '#ffd700',
+        'PID-4': '#ffef91',
+        'PID-R': '#6c757d'
+    };
 
     // REFS FOR LIBRARIES
     const timelineRef = useRef(null);
@@ -116,6 +125,7 @@ const AdminDashboard = () => {
     // AUTOMATIC LIVE SYNC LISTENER
     useEffect(() => {
         fetchOrdersFromSupabase();
+        fetchBastosInventory();
 
         const channel = supabase
             .channel('admin-orders-sync')
@@ -128,6 +138,13 @@ const AdminDashboard = () => {
             )
             .subscribe();
 
+        const bastosChannel = supabase
+                .channel('admin-bastos-sync')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bastos_logs' }, () => {
+                    fetchBastosInventory();
+                })
+                .subscribe();
+
         const modalElement = document.getElementById('orderDetailModal');
         const handleModalHidden = () => {
             setSelectedOrder(null);
@@ -139,6 +156,7 @@ const AdminDashboard = () => {
 
         return () => {
             supabase.removeChannel(channel);
+            supabase.removeChannel(bastosChannel);
             if (modalElement) {
                 modalElement.removeEventListener('hidden.bs.modal', handleModalHidden);
             }
@@ -188,6 +206,41 @@ const AdminDashboard = () => {
         }
     };
 
+    const fetchBastosInventory = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('bastos_logs')
+                .select('grade');
+
+            if (error) throw error;
+
+            if (data) {
+                const logCounts = data.reduce((acc, row) => {
+                    let fiberGrade = row.grade ? row.grade.trim().toUpperCase() : 'PID-R';
+                       if (fiberGrade === 'PID-R (RESIDUAL)') {
+                          fiberGrade = 'PID-R';
+                          }
+
+                    acc[fiberGrade] = (acc[fiberGrade] || 0) + 1;
+                    return acc;
+                }, {});
+
+                const expectedGrades = ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'];
+                const labels = [];
+                const values = [];
+
+                expectedGrades.forEach(grade => {
+                    labels.push(grade);
+                    values.push(logCounts[grade] || 0);
+                });
+
+                setBastosChartData({ labels, values });
+            }
+        } catch (error) {
+            console.error('Error fetching inventory from bastos_logs:', error.message);
+        }
+    };
+
     useEffect(() => {
         const now = new Date().toLocaleDateString('en-PH', {
             weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
@@ -216,7 +269,11 @@ const AdminDashboard = () => {
                 data: {
                     labels: ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'],
                     datasets: [{
-                        data: [120, 190, 80, 50, 30],
+                        data: ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'].map(grade => {
+                            if (!bastosChartData.labels.length) return 0;
+                            const idx = bastosChartData.labels.indexOf(grade);
+                            return idx !== -1 ? bastosChartData.values[idx] : 0;
+                        }),
                         backgroundColor: ['#468432', '#5da441', '#ffd700', '#ffef91', '#6c757d'],
                         borderWidth: 4,
                         borderColor: '#ffffff'
@@ -293,6 +350,14 @@ const AdminDashboard = () => {
             if (salesChartRef.current) { salesChartRef.current.destroy(); salesChartRef.current = null; }
         };
     }, [activeTab]);
+
+    useEffect(() => {
+        if (chartRef.current && bastosChartData.labels.length > 0) {
+            chartRef.current.data.labels = bastosChartData.labels;
+            chartRef.current.data.datasets[0].data = bastosChartData.values;
+            chartRef.current.update();
+        }
+    }, [bastosChartData]);
 
     useEffect(() => {
         if (salesChartRef.current) {
