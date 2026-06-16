@@ -16,6 +16,10 @@ const AdminDashboard = () => {
     const [salesView, setSalesView] = useState('paid');
     const [bastosChartData, setBastosChartData] = useState({ labels: [], values: [] });
 
+    // STATE FOR REAL-TIME FARM DATA
+    const [farms, setFarms] = useState([]);
+    const [isFarmsLoading, setIsFarmsLoading] = useState(true);
+
     const colorMap = {
         'PID-1': '#468432',
         'PID-2': '#5da441',
@@ -32,24 +36,13 @@ const AdminDashboard = () => {
     const salesChartCanvas = useRef(null);
     const salesChartRef = useRef(null);
 
-    // DATA SETS FARM TIMELINE (DUMMY)
-    const groups = useRef(new DataSet([
-        {id: 1, content: 'Lallo QP Farm'},
-        {id: 2, content: 'Gadin QP Farm'},
-        {id: 3, content: 'Vasquez QP'},
-        {id: 4, content: 'Abuyo QP Farm'}
-    ]));
-
-    const items = useRef(new DataSet([
-        {id: 1, group: 1, content: 'Vegetative', start: '2026-01-01', end: '2026-06-01', className: 'bar-veg'},
-        {id: 2, group: 1, content: 'Flowering', start: '2026-06-02', end: '2026-08-01', className: 'bar-flow'},
-        {id: 3, group: 3, content: 'Vegetative', start: '2026-02-15', end: '2026-07-15', className: 'bar-veg'},
-        {id: 4, group: 3, content: 'Flowering', start: '2026-07-16', end: '2026-09-15', className: 'bar-flow'}
-    ]));
+    // REACTIVE VIS-TIMELINE DATA SETS
+    const groups = useRef(new DataSet([]));
+    const items = useRef(new DataSet([]));
 
     // STATE MANAGEMENT
-    const [selectedBatch, setSelectedBatch] = useState(null); // Para sa Fiber Inventory Batch Report
-    const [selectedOrder, setSelectedOrder] = useState(null); // Para sa Production Specs Order Modal
+    const [selectedBatch, setSelectedBatch] = useState(null);
+    const [selectedOrder, setSelectedOrder] = useState(null);
 
     const handleViewDetails = (e, orderData) => {
         if (e) {
@@ -101,7 +94,7 @@ const AdminDashboard = () => {
     const productionCount = supabaseOrders.filter(o => o.order_status === 'Weaving' || o.order_status === 'Confirmed').length;
     const completedCount = supabaseOrders.filter(o => o.order_status === 'Received' || o.order_status === 'Shipping').length;
 
-    // FETCHES ORDER
+    // FETCHES ORDERS
     const fetchOrdersFromSupabase = async () => {
         try {
             setIsLoading(true);
@@ -122,28 +115,106 @@ const AdminDashboard = () => {
         }
     };
 
+    // FETCHES FARMS FROM DATABASE
+    const fetchFarmsFromSupabase = async () => {
+        try {
+            setIsFarmsLoading(true);
+            const { data, error } = await supabase
+                .from('farm')
+                .select('*')
+                .order('farm_name', { ascending: true });
+
+            if (error) throw error;
+            setFarms(data || []);
+            updateTimelineData(data || []);
+        } catch (error) {
+            console.error('Error fetching farm database data:', error.message);
+        } finally {
+            setIsFarmsLoading(false);
+        }
+    };
+
+    // PROCESSES AND TRANSFORMS SUPABASE DATA FOR THE TIMELINE
+        const updateTimelineData = (farmData) => {
+            if (!groups.current || !items.current) return;
+
+            groups.current.clear();
+            items.current.clear();
+
+            const uniqueFarms = [];
+            const dynamicItems = [];
+
+            farmData.forEach((farm) => {
+                const groupId = String(farm.id);
+                const itemId = `item_${farm.id}`;
+
+                // Pass clean plaintext strings for group contents
+                uniqueFarms.push({
+                    id: groupId,
+                    content: farm.farm_name
+                });
+
+                const phaseName = farm.status_name || 'Vegetative';
+                const phaseClass = phaseName.toLowerCase().includes('flow') ? 'bar-flow' : 'bar-veg';
+
+                dynamicItems.push({
+                    id: itemId,
+                    group: groupId,
+                    content: phaseName,
+                    start: farm.start_date,
+                    end: farm.end_date,
+                    className: phaseClass
+                });
+            });
+
+            groups.current.add(uniqueFarms);
+            items.current.add(dynamicItems);
+
+            if (timelineRef.current) {
+                timelineRef.current.setGroups(groups.current);
+                timelineRef.current.setItems(items.current);
+                timelineRef.current.redraw();
+
+                // Forces the timeline camera window to scale and center on the new bars
+                setTimeout(() => {
+                    if (timelineRef.current && farmData.length > 0) {
+                        timelineRef.current.fit({ animation: false });
+                    }
+                }, 50);
+            }
+        };
+
     // AUTOMATIC LIVE SYNC LISTENER
     useEffect(() => {
         fetchOrdersFromSupabase();
         fetchBastosInventory();
+        fetchFarmsFromSupabase();
 
         const channel = supabase
             .channel('admin-orders-sync')
             .on(
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'orders' },
-                () => {
-                    fetchOrdersFromSupabase();
-                }
+                () => { fetchOrdersFromSupabase(); }
             )
             .subscribe();
 
         const bastosChannel = supabase
-                .channel('admin-bastos-sync')
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bastos_logs' }, () => {
-                    fetchBastosInventory();
-                })
-                .subscribe();
+            .channel('admin-bastos-sync')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bastos_logs' }, () => {
+                fetchBastosInventory();
+            })
+            .subscribe();
+
+        // REAL-TIME LISTENER ENGINE BINDING FOR FARM RECORDS
+        const farmChannel = supabase
+            .channel('admin-farm-sync')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'farm' },
+                () => { fetchFarmsFromSupabase(); }
+            )
+            .subscribe();
 
         const modalElement = document.getElementById('orderDetailModal');
         const handleModalHidden = () => {
@@ -157,6 +228,7 @@ const AdminDashboard = () => {
         return () => {
             supabase.removeChannel(channel);
             supabase.removeChannel(bastosChannel);
+            supabase.removeChannel(farmChannel);
             if (modalElement) {
                 modalElement.removeEventListener('hidden.bs.modal', handleModalHidden);
             }
@@ -217,9 +289,9 @@ const AdminDashboard = () => {
             if (data) {
                 const logCounts = data.reduce((acc, row) => {
                     let fiberGrade = row.grade ? row.grade.trim().toUpperCase() : 'PID-R';
-                       if (fiberGrade === 'PID-R (RESIDUAL)') {
-                          fiberGrade = 'PID-R';
-                          }
+                    if (fiberGrade === 'PID-R (RESIDUAL)') {
+                        fiberGrade = 'PID-R';
+                    }
 
                     acc[fiberGrade] = (acc[fiberGrade] || 0) + 1;
                     return acc;
@@ -254,12 +326,15 @@ const AdminDashboard = () => {
         };
         window.addEventListener('resize', handleResize);
 
+        // INITIALIZE THE VIS TIMELINE GRAPH OBJECT WITH DEFAULT DATA SET REFS BOUND
         if (timelineContainer.current && !timelineRef.current) {
             timelineRef.current = new Timeline(timelineContainer.current, items.current, groups.current, {
-                height: '450px',
-                start: '2026-01-01',
-                end: '2026-12-31',
-                orientation: 'top'
+                height: '420px',
+                start: '2024-09-01',
+                end: '2027-06-01',
+                orientation: 'top',
+                stack: true,
+                editable: false
             });
         }
 
@@ -376,20 +451,28 @@ const AdminDashboard = () => {
         }
     }, [supabaseOrders]);
 
+    // ENSURE TIMELINE CALLS REDRAW ACTIONS WHEN ACTIVATING TABS OR UPDATE EVENTS FINISH PROCESSING
     useEffect(() => {
-        if (activeTab === 'v-farm' && timelineRef.current) {
+        if (activeTab === 'v-farm') {
             setTimeout(() => {
-                timelineRef.current.checkResize();
-                timelineRef.current.redraw();
-            }, 50);
+                if (timelineRef.current) {
+                    timelineRef.current.checkResize();
+                    timelineRef.current.redraw();
+                    if (farms.length > 0) {
+                        timelineRef.current.fit();
+                    }
+                }
+            }, 100);
         }
-    }, [activeTab]);
+    }, [activeTab, farms]);
 
     const filterTimeline = (e) => {
         const val = e.target.value.toLowerCase();
         groups.current.forEach((group) => {
-            const isVisible = group.content.toLowerCase().indexOf(val) !== -1;
-            groups.current.update({id: group.id, visible: isVisible});
+            // Strip HTML tags away from text content for accurate text search
+            const innerText = group.content.replace(/<[^>]*>/g, '').toLowerCase();
+            const isVisible = innerText.indexOf(val) !== -1;
+            groups.current.update({ id: group.id, visible: isVisible });
         });
     };
 
@@ -438,7 +521,7 @@ const AdminDashboard = () => {
                             <div className="row g-3 mb-5">
                                 {[
                                     { label: 'Total Sales', count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`, color: '#468432' },
-                                    { label: 'Active Farms', count: '4', color: '#b59a00' },
+                                    { label: 'Active Farms', count: isFarmsLoading ? '...' : farms.length, color: '#b59a00' },
                                     { label: 'Current Market Orders', count: isLoading ? '...' : supabaseOrders.length, color: '#6c757d' }
                                 ].map((w, i) => (
                                     <div className="col-12 col-sm-4" key={i}>
@@ -511,21 +594,71 @@ const AdminDashboard = () => {
                                                 <th>Owner / Contact</th>
                                                 <th className="d-none d-md-table-cell">Contact Number</th>
                                                 <th>Status</th>
-                                                <th style={{width: '150px'}}>Progress</th>
+                                                <th style={{ width: '150px' }}>Progress</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <tr>
-                                                <td className="ps-4 fw-bold">Lallo QP Farm</td>
-                                                <td>Juan Dela Cruz</td>
-                                                <td className="d-none d-md-table-cell">+63 912 345 6789</td>
-                                                <td><span className="badge bg-warning text-dark">Flowering</span></td>
-                                                <td>
-                                                    <div className="progress" style={{height: '8px'}}>
-                                                        <div className="progress-bar bg-success" style={{width: '65%'}}></div>
-                                                    </div>
-                                                </td>
-                                            </tr>
+                                            {isFarmsLoading ? (
+                                                <tr>
+                                                    <td colSpan="5" className="text-center text-muted small py-4">Syncing active farm database ledger...</td>
+                                                </tr>
+                                            ) : farms.length > 0 ? (
+                                                farms.map((farm) => (
+                                                    <tr key={farm.id}>
+                                                        <td className="ps-4 fw-bold">{farm.farm_name}</td>
+                                                        <td>{farm.owner_name || '—'}</td>
+                                                        <td className="d-none d-md-table-cell">{farm.contact_number || '—'}</td>
+                                                        <td>
+                                                            <span className={`badge px-2 py-1 ${farm.status_name?.toLowerCase().includes('veg') ? 'bg-success text-white' : 'bg-warning text-dark'}`}>
+                                                                {farm.status_name}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                           <td>
+                                                               <td>
+                                                                   {/* The parent container background dynamically fills up matching the progress percentage */}
+                                                                   <div
+                                                                       className="d-flex align-items-center gap-2 p-2 rounded text-white shadow-sm"
+                                                                       style={{
+                                                                           background: `linear-gradient(to right, #468432 ${farm.progress || 0}%, #CACBCD ${farm.progress || 0}%)`
+                                                                       }}
+                                                                   >
+                                                                       {/* Transparent thin inner bar to keep your original design structure legible */}
+                                                                       <div
+                                                                           className="progress flex-grow-1 border-0"
+                                                                           style={{ height: '6px', backgroundColor: 'rgba(255, 255, 255, 0.15)' }}
+                                                                           title={`Progress: ${farm.progress || 0}%`}
+                                                                       >
+                                                                           <div
+                                                                               className="progress-bar bg-white"
+                                                                               style={{ width: `${farm.progress || 0}%` }}
+                                                                           ></div>
+                                                                       </div>
+
+                                                                       {/* Dynamic color switcher: Text turns dark gray if the background fill hasn't reached it yet */}
+                                                                       <span
+                                                                           className="fw-bold small"
+                                                                           style={{
+                                                                               minWidth: '85px',
+                                                                               fontSize: '15px',
+                                                                               color: '#ffffff',
+                                                                               textShadow: '0 1px 2px rgba(0,0,0,0.2)',
+                                                                               transition: 'color 0.3s ease'
+                                                                           }}
+                                                                       >
+                                                                           {farm.progress || 0}%
+                                                                       </span>
+                                                                   </div>
+                                                               </td>
+                                                           </td>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            ) : (
+                                                <tr>
+                                                    <td colSpan="5" className="text-center text-muted small py-4">No active farm ledger records registered.</td>
+                                                </tr>
+                                            )}
                                         </tbody>
                                     </table>
                                 </div>
@@ -565,7 +698,7 @@ const AdminDashboard = () => {
                                             </div>
 
                                             <div className="w-100 px-1">
-                                                {[{l: 'Color', v: '94%'}, {l: 'Purity', v: '88%'}, {l: 'Texture', v: '91%'}].map((m, i) => (
+                                                {[{ l: 'Color', v: '94%' }, { l: 'Purity', v: '88%' }, { l: 'Texture', v: '91%' }].map((m, i) => (
                                                     <div className="mb-2" key={i}>
                                                         <div className="d-flex justify-content-between small mb-1 fw-bold lpmpc-green" style={{ fontSize: '0.7rem' }}>
                                                             <span>{m.l}</span><span>{m.v}</span>
@@ -616,7 +749,7 @@ const AdminDashboard = () => {
                                                             </td>
                                                             <td className="text-center fw-bold text-muted">{batch.score}</td>
                                                             <td className="text-end">
-                                                                <button className="btn btn-sm text-success fw-bold p-0" style={{fontSize: '0.75rem'}}> View Details</button>
+                                                                <button className="btn btn-sm text-success fw-bold p-0" style={{ fontSize: '0.75rem' }}> View Details</button>
                                                             </td>
                                                         </tr>
                                                     ))}
@@ -673,16 +806,15 @@ const AdminDashboard = () => {
                                                                 {fiber.score.split('/')[0]}<small className="text-muted fw-normal">%</small>
                                                             </td>
                                                             <td className="py-3 text-center">
-                                                                <span className={`badge rounded-pill px-2 py-1 ${
-                                                                    fiber.status === 'Optimal' ? 'bg-success bg-opacity-10 text-success' :
-                                                                    fiber.status === 'Low Stock' ? 'bg-warning bg-opacity-10 text-warning' :
-                                                                    'bg-danger bg-opacity-10 text-danger'
-                                                                }`} style={{ fontSize: '0.65rem' }}>
+                                                                <span className={`badge rounded-pill px-2 py-1 ${fiber.status === 'Optimal' ? 'bg-success bg-opacity-10 text-success' :
+                                                                        fiber.status === 'Low Stock' ? 'bg-warning bg-opacity-10 text-warning' :
+                                                                            'bg-danger bg-opacity-10 text-danger'
+                                                                    }`} style={{ fontSize: '0.65rem' }}>
                                                                     {fiber.status}
                                                                 </span>
                                                             </td>
                                                             <td className="py-3 text-end pe-3">
-                                                                <button className="btn btn-sm text-success fw-bold p-0" style={{fontSize: '0.75rem'}}>
+                                                                <button className="btn btn-sm text-success fw-bold p-0" style={{ fontSize: '0.75rem' }}>
                                                                     View Details
                                                                 </button>
                                                             </td>
@@ -970,7 +1102,6 @@ const AdminDashboard = () => {
                                                                     </td>
                                                                     <td className="text-center pe-4 py-3">
                                                                         <div className="d-flex justify-content-center gap-2">
-                                                                            {/* VIEW DETAILS ACTION */}
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={(e) => handleViewDetails(e, order)}
@@ -981,7 +1112,6 @@ const AdminDashboard = () => {
                                                                                 <span className="material-symbols-outlined align-middle" style={{ fontSize: '20px' }}>visibility</span>
                                                                             </button>
 
-                                                                            {/* REJECT/CANCEL ACTION */}
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={(e) => {
@@ -1097,7 +1227,7 @@ const AdminDashboard = () => {
                                                             <td colSpan="4" className="text-center py-4 text-muted small">Loading transactions...</td>
                                                         </tr>
                                                     ) : paidOrders.length > 0 ? (
-                                                        paidOrders.map((sale, i) => (
+                                                        paidOrders.map((sale) => (
                                                             <tr key={sale.id} className="border-bottom">
                                                                 <td className="fw-bold px-4 py-3">LPMPC-2026-{sale.id.slice(0, 3).toUpperCase()}</td>
                                                                 <td className="text-muted">{new Date(sale.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
@@ -1137,7 +1267,7 @@ const AdminDashboard = () => {
                                                             <td colSpan="5" className="text-center py-4 text-muted small">Loading transactions...</td>
                                                         </tr>
                                                     ) : unpaidOrders.length > 0 ? (
-                                                        unpaidOrders.map((sale, i) => (
+                                                        unpaidOrders.map((sale) => (
                                                             <tr key={sale.id} className="border-bottom">
                                                                 <td className="fw-bold px-4 py-3">LPMPC-2026-{sale.id.slice(0, 3).toUpperCase()}</td>
                                                                 <td className="text-muted">{new Date(sale.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
@@ -1174,18 +1304,41 @@ const AdminDashboard = () => {
             <style dangerouslySetInnerHTML={{ __html: `
                  @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&display=swap');
                  .lpmpc-green { color: #468432 !important; }
+                 .bg-lpmpc-green { background-color: #468432 !important; }
                  .card { transition: transform 0.2s ease; }
                  .card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important; }
                  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
                  .text-lpmpc { color: #468432; }
                  .table-sm td, .table-sm th { padding: 0.5rem; }
+
+                 /* Vis Timeline CSS Custom Styling rules targeting element node colors */
+                 .vis-item.bar-veg {
+                     background-color: #a1c19d !important;
+                     border-color: #7b9c77 !important;
+                     color: #2b4c1e !important;
+                     font-weight: bold !important;
+                 }
+                 .vis-item.bar-flow {
+                     background-color: #ffd700 !important;
+                     border-color: #e0be00 !important;
+                     color: #000000 !important;
+                     font-weight: bold !important;
+                 }
+                 .vis-item {
+                     border-radius: 4px !important;
+                     padding: 6px !important;
+                     font-size: 13px !important;
+                 }
+                 .vis-label {
+                     font-weight: 600 !important;
+                     color: #212529 !important;
+                 }
             `}} />
 
             {/* REAL-TIME PRODUCTION ORDER DETAILS MODAL (POPUP) */}
             <div className="modal fade" id="orderDetailModal" tabIndex="-1" aria-hidden="true" data-bs-backdrop="static">
                 <div className="modal-dialog modal-lg modal-dialog-centered">
                     <div className="modal-content rounded-0 border-0 shadow">
-                        {/* MODAL HEADER */}
                         <div className="modal-header bg-lpmpc-green text-white rounded-0 py-3 px-4 d-flex justify-content-between align-items-center">
                             <div>
                                 <h5 className="modal-title fw-bold text-uppercase m-0" style={{ fontSize: '16px', letterSpacing: '0.5px', fontFamily: "'Montserrat', sans-serif" }}>
@@ -1200,12 +1353,10 @@ const AdminDashboard = () => {
                             <button type="button" className="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close" onClick={() => setSelectedOrder(null)}></button>
                         </div>
 
-                        {/* MODAL BODY */}
                         <div className="modal-body p-4 bg-light">
                             {selectedOrder ? (
                                 <div className="container-fluid p-0">
                                     <div className="row g-4">
-                                        {/* LEFT COLUMN: DESIGN BLUEPRINT REFERENCE */}
                                         <div className="col-md-4 text-center">
                                             <div className="card border-0 rounded-0 shadow-sm p-3 bg-white h-100 d-flex flex-column justify-content-between">
                                                 <div>
@@ -1229,12 +1380,10 @@ const AdminDashboard = () => {
                                             </div>
                                         </div>
 
-                                        {/* RIGHT COLUMN: DETAIL PROFILES */}
                                         <div className="col-md-8">
                                             <div className="d-flex flex-column gap-3">
-                                                {/* CLIENT METADATA CONTAINER */}
                                                 <div className="card border-0 rounded-0 shadow-sm p-3 bg-white">
-                                                    <h6 className="fw-bold text-uppercase mb-3 pb-2 border-bottom text-dark" style={{ fontSize: '13px', color: '#1e1e24' }}>
+                                                    <h6 className="fw-bold text-uppercase mb-3 pb-2 border-bottom text-dark" style={{ fontSize: '13px' }}>
                                                         Customer Logistics & Contact Profile
                                                     </h6>
                                                     <div className="row g-2" style={{ fontSize: '13px' }}>
@@ -1252,7 +1401,6 @@ const AdminDashboard = () => {
                                                     </div>
                                                 </div>
 
-                                                {/* FIBER PRODUCTION REQUIREMENTS */}
                                                 <div className="card border-0 rounded-0 shadow-sm p-3 bg-white">
                                                     <h6 className="fw-bold text-uppercase mb-2 pb-2 border-bottom text-dark" style={{ fontSize: '13px' }}>
                                                         Fiber Evaluation Specifications
@@ -1271,7 +1419,6 @@ const AdminDashboard = () => {
                                             </div>
                                         </div>
 
-                                        {/* DETAILED MEASUREMENTS BREAKDOWN MATRIX */}
                                         <div className="col-12">
                                             <div className="card border-0 rounded-0 shadow-sm p-3 bg-white">
                                                 <h6 className="fw-bold text-uppercase mb-3 pb-2 border-bottom text-dark" style={{ fontSize: '13px' }}>
@@ -1313,7 +1460,6 @@ const AdminDashboard = () => {
                                                     </table>
                                                 </div>
 
-                                                {/* SPECIAL ORDER NOTES SECTION */}
                                                 {selectedOrder.special_notes && (
                                                     <div className="mt-3 bg-light p-2 border border-light-subtle" style={{ fontSize: '12px' }}>
                                                         <b className="text-uppercase text-muted d-block mb-1" style={{ fontSize: '10px' }}>Special Instructions / Client Notes:</b>
@@ -1326,11 +1472,10 @@ const AdminDashboard = () => {
                                 </div>
                             ) : (
                                 <div className="text-center py-4 text-muted small">
-                                    No active workspace entry selected for profiling.
+                                    No active entry selected for profiling.
                                 </div>
                             )}
                         </div>
-
                     </div>
                 </div>
             </div>
