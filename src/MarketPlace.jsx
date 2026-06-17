@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { useNavigate } from 'react-router-dom';
 
 const supabaseUrl = 'https://bqblzvgwkvdkanobntgn.supabase.co';
 const supabaseKey = 'sb_publishable_cKKlFv0eCaArfywT-fqzaQ_QEXrLLbm';
@@ -209,6 +210,8 @@ const App = () => {
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
 
+    const navigate = useNavigate();
+
     const registerUser = async (e) => {
         if (e) e.preventDefault();
         setLoading(true);
@@ -270,8 +273,10 @@ const App = () => {
 
             if (profile.role === "admin") {
                 alert("Welcome, System Admin!");
+                navigate('/');
             } else if (profile.role === "farmer") {
                 alert("Welcome, Partner Farmer!");
+                navigate('/farmer');
             } else {
                 alert("Login Successful!");
             }

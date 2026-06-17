@@ -228,7 +228,8 @@ footer {
 }
 
 @media (max-width: 991.98px) {
-    nav.bg-lpmpc-green.vh-100 {
+    /* Sapilitang gagawing top horizontal bar ang fixed vertical nav natin */
+    nav.bg-lpmpc-green.vh-100.position-fixed {
         width: 100% !important;
         height: 60px !important;
         position: fixed !important;
@@ -242,32 +243,50 @@ footer {
         z-index: 2000 !important;
         border-bottom: 3px solid var(--lpmpc-gold) !important;
     }
-    nav .p-4.border-bottom {
+
+    nav .border-bottom {
         padding: 0 !important;
         border: none !important;
         display: flex !important;
         align-items: center !important;
         width: auto !important;
     }
-    nav .p-4.border-bottom h4 {
-        font-size: 1rem !important;
+
+    nav .border-bottom h4 {
+        font-size: 1.1rem !important;
         margin: 0 !important;
-        display: block !important;
         white-space: nowrap;
     }
-    nav .nav {
+
+    /* Gagawing pahiga ang buttons at papayagang ma-scroll pakanan kung kulang ang screen space */
+    nav .nav.flex-column {
         flex-direction: row !important;
         margin-top: 0 !important;
         height: 100% !important;
         display: flex !important;
         align-items: center !important;
-        gap: 2px !important;
+        gap: 5px !important;
+        overflow-x: auto !important;
+        white-space: nowrap;
     }
+
+    .admin-tab-btn {
+        padding: 10px 15px !important;
+        font-size: 0.75rem !important;
+        white-space: nowrap;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        border-left: none !important;
+    }
+
     .admin-tab-btn.active {
         background: transparent !important;
         border-left: none !important;
         position: relative;
     }
+
+    /* Indicator line sa ilalim ng active text imbis na sa kaliwa */
     .admin-tab-btn.active::after {
         content: "";
         position: absolute;
@@ -276,19 +295,6 @@ footer {
         right: 0;
         height: 4px;
         background-color: var(--lpmpc-gold);
-    }
-    main.offset-md-3, main.offset-lg-2, .admin-layout main {
-        margin-left: 0 !important;
-        margin-top: 60px !important;
-        width: 100% !important;
-        padding: 15px !important;
-    }
-    .navbar-collapse {
-        background-color: var(--lpmpc-green);
-        padding: 1rem;
-        border-radius: 0 0 15px 15px;
-        margin-top: 10px;
-        border: 1px solid var(--lpmpc-gold);
     }
 }
 
@@ -305,4 +311,84 @@ footer {
 @keyframes pulse-soft {
     0%, 100% { transform: scale(0.98); opacity: 0.8; }
     50% { transform: scale(1); opacity: 1; }
+}
+
+/* --- FARMER PORTAL BATCH & TIMELINE OVERRIDES --- */
+.vis-timeline {
+    border: 1px solid #dee2e6 !important;
+    font-family: 'Montserrat', sans-serif !important;
+    background-color: #ffffff;
+}
+.vis-label {
+    border-bottom: 1px solid #dee2e6 !important;
+    font-weight: bold;
+    color: var(--text-dark);
+    background-color: #ffffff;
+}
+.vis-time-axis .vis-text {
+    color: #6c757d !important;
+    font-weight: 600 !important;
+    font-size: 11px !important;
+}
+
+/* Eksaktong kulay at border alignment mula sa map design ng Admin */
+.vis-item.bar-veg {
+    background-color: #a3c699 !important;
+    color: #1e3d14 !important;
+    border: 1px solid var(--lpmpc-green) !important;
+    font-weight: bold !important;
+    border-radius: 0px !important;
+}
+.vis-item.bar-flow {
+    background-color: var(--lpmpc-gold) !important;
+    color: #000000 !important;
+    border: 1px solid #d4af00 !important;
+    font-weight: bold !important;
+    border-radius: 0px !important;
+}
+
+/* Status Badges at Progress Bar system */
+.status-pill-flowering {
+    background-color: #FFC107 !important;
+    color: #212529 !important;
+    font-weight: 700;
+    border-radius: 4px !important;
+    padding: 4px 8px !important;
+    display: inline-block;
+    font-size: 12px;
+}
+.status-pill-vegetative {
+    background-color: #198754 !important;
+    color: #ffffff !important;
+    font-weight: 700;
+    border-radius: 4px !important;
+    padding: 4px 8px !important;
+    display: inline-block;
+    font-size: 12px;
+}
+.clean-solid-progress {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    border-radius: 8px !important;
+    color: #ffffff;
+    font-size: 14px;
+    height: 36px;
+    width: 120px;
+    text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.settings-icon-btn {
+    background: transparent;
+    border: none;
+    color: #ffffff;
+    font-size: 1.25rem;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+.settings-icon-btn:hover {
+    transform: rotate(30deg);
+    color: var(--lpmpc-gold);
 }
