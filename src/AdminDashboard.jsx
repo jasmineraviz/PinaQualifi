@@ -476,6 +476,46 @@ const AdminDashboard = () => {
         });
     };
 
+
+   const handleCreateFarmer = async (e) => {
+       e.preventDefault();
+       const formData = new FormData(e.target);
+       const data = Object.fromEntries(formData.entries());
+
+       try {
+           // 1. Create Auth User
+           const { data: authData, error: authError } = await supabase.auth.signUp({
+               email: data.email,
+               password: data.password,
+               options: { data: { full_name: data.fullName } }
+           });
+
+           if (authError) throw authError;
+
+           // 2. Insert details into 'users' table
+           const { error: dbError } = await supabase.from('users').insert([
+               {
+                   id: authData.user.id,
+                   full_name: data.fullName,
+                   email: data.email,
+                   address: data.address,
+                   farm_name: data.farmName,
+                   contact_no: data.contactNo,
+                   role: 'farmer'
+               }
+           ]);
+
+           if (dbError) throw dbError;
+
+           alert("Farmer account created successfully!");
+           document.querySelector('[data-bs-dismiss="modal"]').click();
+           e.target.reset();
+       } catch (err) {
+           alert("Error: " + err.message);
+       }
+   };
+
+
     return (
         <div className="admin-layout admin-layout-wrapper">
             <div className="container-fluid p-0">
@@ -663,6 +703,25 @@ const AdminDashboard = () => {
                                     </table>
                                 </div>
                             </div>
+
+                            <button
+                                className="btn rounded-circle shadow-lg position-fixed d-flex align-items-center justify-content-center"
+                                style={{
+                                    bottom: '30px',
+                                    right: '30px',
+                                    width: '60px',
+                                    height: '60px',
+                                    zIndex: 1000,
+                                    backgroundColor: '#468432', // LPMPC Green Theme
+                                    color: '#ffffff',
+                                    fontSize: '24px'
+                                }}
+                                data-bs-toggle="modal"
+                                data-bs-target="#addFarmerModal"
+                            >
+                                +
+                            </button>
+
                         </div>
 
                         {/* [TAB 3] : INVENTORY TAB LAYOUT */}
@@ -1479,6 +1538,49 @@ const AdminDashboard = () => {
                     </div>
                 </div>
             </div>
+
+            <div className="modal fade" id="addFarmerModal" tabIndex="-1">
+                <div className="modal-dialog">
+                    <div className="modal-content rounded-0">
+                        <div className="modal-header bg-light">
+                            <h5 className="modal-title fw-bold text-uppercase lpmpc-green">Register New Farmer</h5>
+                            <button type="button" className="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div className="modal-body">
+                            <form id="addFarmerForm" onSubmit={handleCreateFarmer}>
+                                <div className="mb-2">
+                                    <label className="small fw-bold text-muted">FULL NAME</label>
+                                    <input type="text" name="fullName" className="form-control rounded-0" required />
+                                </div>
+                                <div className="mb-2">
+                                    <label className="small fw-bold text-muted">EMAIL</label>
+                                    <input type="email" name="email" className="form-control rounded-0" required />
+                                </div>
+                                <div className="mb-2">
+                                    <label className="small fw-bold text-muted">ADDRESS</label>
+                                    <input type="text" name="address" className="form-control rounded-0" required />
+                                </div>
+                                <div className="mb-2">
+                                    <label className="small fw-bold text-muted">FARM NAME</label>
+                                    <input type="text" name="farmName" className="form-control rounded-0" required />
+                                </div>
+                                <div className="mb-3">
+                                    <label className="small fw-bold text-muted">CONTACT NUMBER</label>
+                                    <input type="text" name="contactNo" className="form-control rounded-0" required />
+                                </div>
+                                <div className="mb-3">
+                                    <label className="small fw-bold text-muted">PASSWORD</label>
+                                    <input type="password" name="password" className="form-control rounded-0" required />
+                                </div>
+                                <button type="submit" className="btn w-100 rounded-0 text-white fw-bold" style={{ backgroundColor: '#468432' }}>
+                                    CREATE ACCOUNT
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
 
         </div>
     );
