@@ -32,6 +32,8 @@ const FarmerDashboard = () => {
     const groups = useRef(new DataSet([]));
     const items = useRef(new DataSet([]));
 
+    const [selectedFarm, setSelectedFarm] = useState(null);
+
     useEffect(() => {
         const now = new Date().toLocaleDateString('en-PH', {
             weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
@@ -164,40 +166,45 @@ const FarmerDashboard = () => {
         updateTimelineEngine(farms);
     }, [farms]);
 
-    const updateTimelineEngine = (farmData) => {
-        if (!groups.current || !items.current) return;
-        groups.current.clear();
-        items.current.clear();
+   const updateTimelineEngine = (farmData) => {
+       if (!groups.current || !items.current) return;
+       groups.current.clear();
+       items.current.clear();
 
-        const uniqueGroups = [];
-        const dynamicItems = [];
+       const uniqueGroups = [];
+       const dynamicItems = [];
 
-        farmData.forEach((farm, index) => {
-            const customGroupId = `group_${farm.id}_${index}`;
-            const itemId = `item_${farm.id}_${index}`;
+       farmData.forEach((farm, index) => {
+           const customGroupId = `group_${farm.id}_${index}`;
+           const itemId = `item_${farm.id}_${index}`;
 
-            uniqueGroups.push({ id: customGroupId, content: farm.batch_id });
-            const phaseName = farm.status_name || 'Vegetative';
-            const phaseClass = phaseName.toLowerCase().includes('flow') ? 'bar-flow' : 'bar-veg';
+           uniqueGroups.push({ id: customGroupId, content: farm.batch_id });
 
-            dynamicItems.push({
-                id: itemId,
-                group: customGroupId,
-                content: phaseName,
-                start: farm.start_date,
-                end: farm.end_date,
-                className: phaseClass
-            });
-        });
+           const s = (farm.status_name || 'vegetative').toLowerCase();
 
-        groups.current.add(uniqueGroups);
-        items.current.add(dynamicItems);
-        if (timelineRef.current) {
-            timelineRef.current.setGroups(groups.current);
-            timelineRef.current.setItems(items.current);
-            timelineRef.current.redraw();
-        }
-    };
+           let phaseClass = 'bar-veg';
+           if (s.includes('harvest')) phaseClass = 'bar-harvest';
+           else if (s.includes('matur')) phaseClass = 'bar-maturation';
+           else if (s.includes('flow')) phaseClass = 'bar-flow';
+
+           dynamicItems.push({
+               id: itemId,
+               group: customGroupId,
+               content: farm.status_name || 'Vegetative',
+               start: farm.start_date,
+               end: farm.end_date,
+               className: phaseClass
+           });
+       });
+
+       groups.current.add(uniqueGroups);
+       items.current.add(dynamicItems);
+       if (timelineRef.current) {
+           timelineRef.current.setGroups(groups.current);
+           timelineRef.current.setItems(items.current);
+           timelineRef.current.redraw();
+       }
+   };
 
     const filterTimeline = (e) => {
         const val = e.target.value.toLowerCase();
@@ -240,6 +247,62 @@ const FarmerDashboard = () => {
             console.error('Security settings patch error:', err.message);
         }
     };
+
+    const handleActivityTrigger = async (farm, activity) => {
+
+        const confirmAction = window.confirm(`Are you sure you want to log '${activity}'? This action cannot be undone.`);
+        if (!confirmAction) return;
+
+        const activityOrder = ['1st Fertilization', '2nd Fertilization', 'Flower Forcing', 'Fruit Shading', 'Harvest'];
+        const currentIndex = activityOrder.indexOf(activity);
+
+        if (currentIndex > 0) {
+            const previousActivity = activityOrder[currentIndex - 1];
+            if (farm.progress < (currentIndex * 20)) {
+                alert(`Please complete '${previousActivity}' first!`);
+                return;
+            }
+        }
+
+        let newStatus = farm.status_name;
+        let newProgress = farm.progress || 0;
+
+        switch (activity) {
+            case '1st Fertilization':
+                newStatus = 'Vegetative';
+                newProgress = 20;
+                break;
+            case '2nd Fertilization':
+                newStatus = 'Vegetative';
+                newProgress = 40;
+                break;
+            case 'Flower Forcing':
+                 newStatus = 'Flowering';
+                 newProgress = 60;
+                 break;
+            case 'Fruit Shading':
+                newStatus = 'Maturation';
+                newProgress = 80;
+                break;
+            case 'Harvest':
+            newStatus = 'Harvesting';
+            newProgress = 100;
+            break;
+        default:
+            return;
+    }
+
+    const { error } = await supabase
+            .from('farm')
+            .update({ status_name: newStatus, progress: newProgress })
+            .eq('id', farm.id);
+
+        if (!error) {
+            setFarms(farms.map(f => f.id === farm.id ? { ...f, status_name: newStatus, progress: newProgress } : f));
+        }
+    };
+
+
 
     return (
         <div className="farmer-portal bg-light min-vh-100">
@@ -312,55 +375,49 @@ const FarmerDashboard = () => {
                                     </thead>
                                     <tbody>
                                         {filteredFarms.length > 0 ? (
-                                            filteredFarms.map((farm) => (
-                                                <tr key={farm.id}>
-                                                    <td className="ps-4 fw-bold">{farm.batch_id}</td>
-                                                    <td>{farm.start_date ? new Date(farm.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}</td>
+                                            filteredFarms.map((farm) => {
+                                                const s = (farm.status_name || 'vegetative').toLowerCase();
 
-                                                    {/* STATUS LOGIC */}
-                                                    <td>
-                                                        {farm.status_name === 'Maturation' || farm.status_name === 'Harvesting' || farm.status_name === 'Post-Harvest' ? (
-                                                            <select
-                                                                className="form-select form-select-sm rounded-0 border-0 fw-bold shadow-none"
-                                                                style={{
-                                                                    backgroundColor: farm.status_name === 'Maturation' ? '#cfe2ff' :
-                                                                                     farm.status_name === 'Harvesting' ? '#fff3cd' : '#e2e3e5'
-                                                                }}
-                                                                value={farm.status_name}
-                                                                onChange={(e) => handleStatusUpdate(farm.id, e.target.value)}
-                                                            >
-                                                                <option value="Maturation">Maturation</option>
-                                                                <option value="Harvesting">Harvesting</option>
-                                                                <option value="Post-Harvest">Post-Harvest</option>
-                                                            </select>
-                                                        ) : (
-                                                            <span className={`badge px-2 py-1 ${farm.status_name?.toLowerCase().includes('veg') ? 'bg-success text-white' : 'bg-info text-white'}`}>
-                                                                {farm.status_name}
+                                                // Logic para sa kulay ng status
+                                                const badgeColors = {
+                                                    vegetative: 'bg-success text-white',
+                                                    flowering: 'bg-pink text-white',
+                                                    maturation: 'bg-warning text-dark',
+                                                    harvesting: 'bg-info text-white'
+                                                };
+                                                const badgeClass = badgeColors[s] || 'bg-success text-white';
+
+                                                return (
+                                                    <tr key={farm.id} onClick={() => setSelectedFarm(farm)} style={{ cursor: 'pointer' }}>
+                                                        <td className="ps-4 fw-bold">{farm.batch_id}</td>
+                                                        <td>{farm.start_date ? new Date(farm.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}</td>
+
+                                                        {/* Status Column */}
+                                                        <td>
+                                                            <span className={`badge px-2 py-1 ${badgeClass}`}>
+                                                                {farm.status_name || 'Vegetative'}
                                                             </span>
-                                                        )}
-                                                    </td>
+                                                        </td>
 
-                                                    <td>
-                                                        <div
-                                                            className="d-flex align-items-center justify-content-center p-2 rounded shadow-sm"
-                                                            style={{
-                                                                background: `linear-gradient(to right, #468432 ${farm.progress || 0}%, #CACBCD ${farm.progress || 0}%)`,
-                                                                color: '#ffffff',
-                                                                fontWeight: 'bold',
-                                                                fontSize: '15px',
-                                                                minWidth: '85px',
-                                                                height: '40px'
-                                                            }}
-                                                        >
-                                                            {farm.progress || 0}%
-                                                        </div>
-                                                    </td>
-
-                                                    <td className="fw-bold text-secondary small">
-                                                        {farm.end_date ? new Date(farm.end_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'N/A'}
-                                                    </td>
-                                                </tr>
-                                            ))
+                                                        <td>
+                                                            <div
+                                                                className="d-flex align-items-center justify-content-center text-white fw-bold rounded"
+                                                                style={{
+                                                                    backgroundColor: '#468432',
+                                                                    width: '80px',
+                                                                    height: '30px',
+                                                                    fontSize: '0.85rem'
+                                                                }}
+                                                            >
+                                                                {farm.progress || 0}%
+                                                            </div>
+                                                        </td>
+                                                        <td className="fw-bold text-secondary small">
+                                                            {farm.end_date ? new Date(farm.end_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'N/A'}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
                                         ) : (
                                             <tr>
                                                 <td colSpan="5" className="text-center py-4">No records found.</td>
@@ -410,7 +467,46 @@ const FarmerDashboard = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Activity Modal */}
+            {selectedFarm && (
+                <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                    <div className="modal-dialog modal-dialog-centered">
+                        <div className="modal-content rounded-0">
+                            <div className="modal-header bg-light rounded-0">
+                                <h6 className="modal-title fw-bold text-uppercase lpmpc-green">Activities: {selectedFarm.batch_id}</h6>
+                                <button className="btn-close" onClick={() => setSelectedFarm(null)}></button>
+                            </div>
+                            <div className="modal-body p-4">
+                                {['1st Fertilization', '2nd Fertilization', 'Flower Forcing', 'Fruit Shading', 'Harvest'].map((act, index) => {
+                                    // Progress threshold per activity (20, 40, 60, 80, 100)
+                                    const threshold = (index + 1) * 20;
+                                    const isDone = selectedFarm.progress >= threshold;
+                                    const isLocked = selectedFarm.progress < (index * 20);
+
+                                    return (
+                                        <button
+                                            key={act}
+                                            className={`btn w-100 mb-2 rounded-0 text-uppercase fw-bold ${isDone ? 'btn-success' : isLocked ? 'btn-outline-secondary' : 'btn-primary'}`}
+                                            disabled={isLocked || isDone}
+                                            onClick={() => {
+                                                handleActivityTrigger(selectedFarm, act);
+                                                setSelectedFarm(null);
+                                            }}
+                                        >
+                                            {isDone ? `✔ ${act} (DONE)` : act}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </div>
+
+
     );
 };
 

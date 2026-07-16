@@ -216,8 +216,20 @@ footer {
     overflow: hidden;
 }
 .vis-item { font-weight: 700 !important; border-radius: 0 !important; }
-.bar-veg { background-color: #a3c19a !important; color: #1e3d14 !important; }
-.bar-flow { background-color: var(--lpmpc-gold) !important; color: #000 !important; }
+
+/* Table Badge Colors */
+.bg-pink { background-color: #e83e8c !important; }
+
+/* Timeline Bar Colors (Dapat tumutugma sa table) */
+.bar-veg { background-color: #28a745 !important; }
+.bar-flow { background-color: #e83e8c !important; color: white !important; }
+.bar-maturation { background-color: #ffc107 !important; color: black !important; }
+.bar-harvest { background-color: #17a2b8 !important; }
+
+.vis-item.bar-veg { background-color: #28a745 !important; border-color: #28a745 !important; color: white !important; }
+.vis-item.bar-flow { background-color: #e83e8c !important; border-color: #e83e8c !important; color: white !important; }
+.vis-item.bar-maturation { background-color: #ffc107 !important; border-color: #ffc107 !important; color: black !important; }
+.vis-item.bar-harvest { background-color: #17a2b8 !important; border-color: #17a2b8 !important; color: white !important; }
 
 /* --- UNIVERSAL RESPONSIVE FIX --- */
 @media (min-width: 992px) {
@@ -329,22 +341,6 @@ footer {
     color: #6c757d !important;
     font-weight: 600 !important;
     font-size: 11px !important;
-}
-
-/* Eksaktong kulay at border alignment mula sa map design ng Admin */
-.vis-item.bar-veg {
-    background-color: #a3c699 !important;
-    color: #1e3d14 !important;
-    border: 1px solid var(--lpmpc-green) !important;
-    font-weight: bold !important;
-    border-radius: 0px !important;
-}
-.vis-item.bar-flow {
-    background-color: var(--lpmpc-gold) !important;
-    color: #000000 !important;
-    border: 1px solid #d4af00 !important;
-    font-weight: bold !important;
-    border-radius: 0px !important;
 }
 
 /* Status Badges at Progress Bar system */

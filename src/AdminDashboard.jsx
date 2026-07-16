@@ -154,8 +154,17 @@ const AdminDashboard = () => {
                     content: farm.farm_name
                 });
 
+                // Sa loob ng updateTimelineData:
                 const phaseName = farm.status_name || 'Vegetative';
-                const phaseClass = phaseName.toLowerCase().includes('flow') ? 'bar-flow' : 'bar-veg';
+                const statusKey = phaseName.toLowerCase();
+
+                // I-map ang status sa specific CSS class para sa timeline
+                const timelineClasses = {
+                    vegetative: 'bar-veg',
+                    flowering: 'bar-flow',
+                    maturation: 'bar-maturation',
+                    harvesting: 'bar-harvest'
+                };
 
                 dynamicItems.push({
                     id: itemId,
@@ -163,7 +172,7 @@ const AdminDashboard = () => {
                     content: phaseName,
                     start: farm.start_date,
                     end: farm.end_date,
-                    className: phaseClass
+                    className: timelineClasses[statusKey] || 'bar-veg'
                 });
             });
 
@@ -627,10 +636,11 @@ const AdminDashboard = () => {
                                     <h5 className="fw-bold m-0 small text-uppercase">Active Farm Batches</h5>
                                 </div>
                                 <div className="table-responsive">
-                                    <table className="table table-hover align-middle mb-0" style={{ minWidth: '600px' }}>
+                                    <table className="table table-hover align-middle mb-0" style={{ minWidth: '700px' }}>
                                         <thead className="table-light text-uppercase small fw-bold">
                                             <tr>
-                                                <th className="ps-4">Farm Name</th>
+                                                <th className="ps-4">Batch ID</th> {/* Bagong Column */}
+                                                <th>Farm Name</th>
                                                 <th>Owner / Contact</th>
                                                 <th className="d-none d-md-table-cell">Contact Number</th>
                                                 <th>Status</th>
@@ -639,66 +649,41 @@ const AdminDashboard = () => {
                                         </thead>
                                         <tbody>
                                             {isFarmsLoading ? (
-                                                <tr>
-                                                    <td colSpan="5" className="text-center text-muted small py-4">Syncing active farm database ledger...</td>
-                                                </tr>
-                                            ) : farms.length > 0 ? (
-                                                farms.map((farm) => (
-                                                    <tr key={farm.id}>
-                                                        <td className="ps-4 fw-bold">{farm.farm_name}</td>
-                                                        <td>{farm.owner_name || '—'}</td>
-                                                        <td className="d-none d-md-table-cell">{farm.contact_number || '—'}</td>
-                                                        <td>
-                                                            <span className={`badge px-2 py-1 ${farm.status_name?.toLowerCase().includes('veg') ? 'bg-success text-white' : 'bg-warning text-dark'}`}>
-                                                                {farm.status_name}
-                                                            </span>
-                                                        </td>
-                                                        <td>
-                                                           <td>
-                                                               <td>
-                                                                   {/* The parent container background dynamically fills up matching the progress percentage */}
-                                                                   <div
-                                                                       className="d-flex align-items-center gap-2 p-2 rounded text-white shadow-sm"
-                                                                       style={{
-                                                                           background: `linear-gradient(to right, #468432 ${farm.progress || 0}%, #CACBCD ${farm.progress || 0}%)`
-                                                                       }}
-                                                                   >
-                                                                       {/* Transparent thin inner bar to keep your original design structure legible */}
-                                                                       <div
-                                                                           className="progress flex-grow-1 border-0"
-                                                                           style={{ height: '6px', backgroundColor: 'rgba(255, 255, 255, 0.15)' }}
-                                                                           title={`Progress: ${farm.progress || 0}%`}
-                                                                       >
-                                                                           <div
-                                                                               className="progress-bar bg-white"
-                                                                               style={{ width: `${farm.progress || 0}%` }}
-                                                                           ></div>
-                                                                       </div>
+                                                <tr><td colSpan="6" className="text-center">Syncing...</td></tr>
+                                            ) : farms.map((farm) => {
+                                                const s = (farm.status_name || 'vegetative').toLowerCase();
 
-                                                                       {/* Dynamic color switcher: Text turns dark gray if the background fill hasn't reached it yet */}
-                                                                       <span
-                                                                           className="fw-bold small"
-                                                                           style={{
-                                                                               minWidth: '85px',
-                                                                               fontSize: '15px',
-                                                                               color: '#ffffff',
-                                                                               textShadow: '0 1px 2px rgba(0,0,0,0.2)',
-                                                                               transition: 'color 0.3s ease'
-                                                                           }}
-                                                                       >
-                                                                           {farm.progress || 0}%
-                                                                       </span>
-                                                                   </div>
-                                                               </td>
-                                                           </td>
+                                                const badgeColors = {
+                                                    vegetative: 'bg-success text-white',
+                                                    flowering: 'bg-pink text-white',
+                                                    maturation: 'bg-warning text-dark',
+                                                    harvesting: 'bg-info text-white'
+                                                };
+                                                const badgeClass = badgeColors[s] || 'bg-success text-white';
+
+                                                return (
+                                                    <tr key={farm.id}>
+                                                        <td className="ps-4 fw-bold">{farm.batch_id}</td> {/* Data ng Batch ID */}
+                                                        <td>{farm.farm_name}</td>
+                                                        <td>{farm.owner_name}</td>
+                                                        <td>{farm.contact_number}</td>
+                                                        <td><span className={`badge ${badgeClass}`}>{farm.status_name}</span></td>
+                                                        <td>
+                                                            <div
+                                                                className="d-flex align-items-center justify-content-center text-white fw-bold rounded"
+                                                                style={{
+                                                                    backgroundColor: '#468432',
+                                                                    width: '80px',
+                                                                    height: '30px',
+                                                                    fontSize: '0.85rem'
+                                                                }}
+                                                            >
+                                                                {farm.progress || 0}%
+                                                            </div>
                                                         </td>
                                                     </tr>
-                                                ))
-                                            ) : (
-                                                <tr>
-                                                    <td colSpan="5" className="text-center text-muted small py-4">No active farm ledger records registered.</td>
-                                                </tr>
-                                            )}
+                                                );
+                                            })}
                                         </tbody>
                                     </table>
                                 </div>
@@ -1372,14 +1357,21 @@ const AdminDashboard = () => {
 
                  /* Vis Timeline CSS Custom Styling rules targeting element node colors */
                  .vis-item.bar-veg {
-                     background-color: #a1c19d !important;
-                     border-color: #7b9c77 !important;
-                     color: #2b4c1e !important;
-                     font-weight: bold !important;
-                 }
-                 .vis-item.bar-flow {
-                     background-color: #ffd700 !important;
-                     border-color: #e0be00 !important;
+                      background-color: #28a745 !important;
+                      border-color: #1e7e34 !important;
+                      color: #ffffff !important;
+                      font-weight: bold !important;
+                  }
+
+                  .vis-item.bar-flow {
+                      background-color: #e83e8c !important;
+                      border-color: #d63384 !important;
+                      color: #ffffff !important;
+                  }
+
+                 .vis-item.bar-maturation {
+                     background-color: #ffc107 !important;
+                     border-color: #d39e00 !important;
                      color: #000000 !important;
                      font-weight: bold !important;
                  }
