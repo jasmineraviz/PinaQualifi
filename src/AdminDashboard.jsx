@@ -3,6 +3,7 @@ import { Chart, registerables } from 'chart.js';
 import { Timeline } from 'vis-timeline/standalone';
 import { DataSet } from 'vis-data';
 import { createClient } from '@supabase/supabase-js';
+import emailjs from '@emailjs/browser';
 
 Chart.register(...registerables);
 
@@ -515,6 +516,38 @@ const AdminDashboard = () => {
            ]);
 
            if (dbError) throw dbError;
+            // Send SMS text reminder to the farmer via Semaphore API
+            try {
+                const smsMessage = `Hi ${data.fullName}, your LPMPC Farmer account has been successfully created! Please check your email (${data.email}) for your login credentials and important instructions. - LPMPC PinaQualify`;
+                const smsBody = new URLSearchParams({
+                    apikey: '3d81194ec2cf0d9b33c8221724d35887',
+                    number: data.contactNo,
+                    message: smsMessage
+                });
+
+                 const smsRes = await fetch('/api/semaphore/api/v4/messages', {
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                     body: smsBody.toString()
+                 });
+                 const smsResult = await smsRes.json();
+                 console.log('Semaphore SMS response:', smsResult);
+            } catch (smsErr) {
+                console.warn('SMS notification failed:', smsErr.message);
+            }
+
+            // Send email with temporary password via EmailJS
+            try {
+                await emailjs.send('service_bxxlbqj', 'template_bs6zso6', {
+                    email: data.email,
+                    farmer_name: data.fullName,
+                    farmer_email: data.email,
+                    temp_password: data.password
+                }, '80xVnHaUIC6d2lJ5l');
+                console.log('EmailJS: Farmer notification email sent successfully');
+            } catch (emailErr) {
+                console.warn('Email notification failed:', emailErr);
+            }
 
            alert("Farmer account created successfully!");
            document.querySelector('[data-bs-dismiss="modal"]').click();
