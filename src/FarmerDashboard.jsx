@@ -147,7 +147,7 @@ const FarmerDashboard = () => {
                         }
 
                         const baseEndDate = new Date(farm.start_date);
-                        baseEndDate.setMonth(baseEndDate.getMonth() + 14);
+                        baseEndDate.setMonth(baseEndDate.getMonth() + 16);
 
                         const totalDaysShift = totalLiveDelay + weatherDecisionDaysShift;
                         const adjustedEndDate = new Date(baseEndDate.getTime() + (totalDaysShift * 24 * 60 * 60 * 1000));
@@ -277,7 +277,7 @@ const FarmerDashboard = () => {
 
         const startDateObj = new Date(plantingDate);
         const endDateObj = new Date(startDateObj);
-        endDateObj.setMonth(endDateObj.getMonth() + 14);
+        endDateObj.setMonth(endDateObj.getMonth() + 16);
 
         const startIso = startDateObj.toISOString().split('T')[0];
         const endIso = endDateObj.toISOString().split('T')[0];
@@ -355,7 +355,7 @@ const FarmerDashboard = () => {
         setPlantingDate(pDate);
         if (pDate) {
             const dateObj = new Date(pDate);
-            dateObj.setMonth(dateObj.getMonth() + 14);
+            dateObj.setMonth(dateObj.getMonth() + 16);
             setEstimatedHarvest(dateObj.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' }));
         }
     };
