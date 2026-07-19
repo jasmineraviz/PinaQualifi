@@ -4,6 +4,8 @@ import { Timeline } from 'vis-timeline/standalone';
 import { DataSet } from 'vis-data';
 import { createClient } from '@supabase/supabase-js';
 import emailjs from '@emailjs/browser';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 Chart.register(...registerables);
 
@@ -136,63 +138,59 @@ const AdminDashboard = () => {
     };
 
     // PROCESSES AND TRANSFORMS SUPABASE DATA FOR THE TIMELINE
-        const updateTimelineData = (farmData) => {
-            if (!groups.current || !items.current) return;
+    const updateTimelineData = (farmData) => {
+        if (!groups.current || !items.current) return;
 
-            groups.current.clear();
-            items.current.clear();
+        groups.current.clear();
+        items.current.clear();
 
-            const uniqueFarms = [];
-            const dynamicItems = [];
+        const uniqueFarms = [];
+        const dynamicItems = [];
 
-            farmData.forEach((farm) => {
-                const groupId = String(farm.id);
-                const itemId = `item_${farm.id}`;
+        farmData.forEach((farm) => {
+            const groupId = String(farm.id);
+            const itemId = `item_${farm.id}`;
 
-                // Pass clean plaintext strings for group contents
-                uniqueFarms.push({
-                    id: groupId,
-                    content: farm.farm_name
-                });
-
-                // Sa loob ng updateTimelineData:
-                const phaseName = farm.status_name || 'Vegetative';
-                const statusKey = phaseName.toLowerCase();
-
-                // I-map ang status sa specific CSS class para sa timeline
-                const timelineClasses = {
-                    vegetative: 'bar-veg',
-                    flowering: 'bar-flow',
-                    maturation: 'bar-maturation',
-                    harvesting: 'bar-harvest'
-                };
-
-                dynamicItems.push({
-                    id: itemId,
-                    group: groupId,
-                    content: phaseName,
-                    start: farm.start_date,
-                    end: farm.end_date,
-                    className: timelineClasses[statusKey] || 'bar-veg'
-                });
+            uniqueFarms.push({
+                id: groupId,
+                content: farm.farm_name
             });
 
-            groups.current.add(uniqueFarms);
-            items.current.add(dynamicItems);
+            const phaseName = farm.status_name || 'Vegetative';
+            const statusKey = phaseName.toLowerCase();
 
-            if (timelineRef.current) {
-                timelineRef.current.setGroups(groups.current);
-                timelineRef.current.setItems(items.current);
-                timelineRef.current.redraw();
+            const timelineClasses = {
+                vegetative: 'bar-veg',
+                flowering: 'bar-flow',
+                maturation: 'bar-maturation',
+                harvesting: 'bar-harvest'
+            };
 
-                // Forces the timeline camera window to scale and center on the new bars
-                setTimeout(() => {
-                    if (timelineRef.current && farmData.length > 0) {
-                        timelineRef.current.fit({ animation: false });
-                    }
-                }, 50);
-            }
-        };
+            dynamicItems.push({
+                id: itemId,
+                group: groupId,
+                content: phaseName,
+                start: farm.start_date,
+                end: farm.end_date,
+                className: timelineClasses[statusKey] || 'bar-veg'
+            });
+        });
+
+        groups.current.add(uniqueFarms);
+        items.current.add(dynamicItems);
+
+        if (timelineRef.current) {
+            timelineRef.current.setGroups(groups.current);
+            timelineRef.current.setItems(items.current);
+            timelineRef.current.redraw();
+
+            setTimeout(() => {
+                if (timelineRef.current && farmData.length > 0) {
+                    timelineRef.current.fit({ animation: false });
+                }
+            }, 50);
+        }
+    };
 
     // AUTOMATIC LIVE SYNC LISTENER
     useEffect(() => {
@@ -216,7 +214,6 @@ const AdminDashboard = () => {
             })
             .subscribe();
 
-        // REAL-TIME LISTENER ENGINE BINDING FOR FARM RECORDS
         const farmChannel = supabase
             .channel('admin-farm-sync')
             .on(
@@ -336,7 +333,6 @@ const AdminDashboard = () => {
         };
         window.addEventListener('resize', handleResize);
 
-        // INITIALIZE THE VIS TIMELINE GRAPH OBJECT WITH DEFAULT DATA SET REFS BOUND
         if (timelineContainer.current && !timelineRef.current) {
             timelineRef.current = new Timeline(timelineContainer.current, items.current, groups.current, {
                 height: '420px',
@@ -461,7 +457,6 @@ const AdminDashboard = () => {
         }
     }, [supabaseOrders]);
 
-    // ENSURE TIMELINE CALLS REDRAW ACTIONS WHEN ACTIVATING TABS OR UPDATE EVENTS FINISH PROCESSING
     useEffect(() => {
         if (activeTab === 'v-farm') {
             setTimeout(() => {
@@ -479,64 +474,91 @@ const AdminDashboard = () => {
     const filterTimeline = (e) => {
         const val = e.target.value.toLowerCase();
         groups.current.forEach((group) => {
-            // Strip HTML tags away from text content for accurate text search
             const innerText = group.content.replace(/<[^>]*>/g, '').toLowerCase();
             const isVisible = innerText.indexOf(val) !== -1;
             groups.current.update({ id: group.id, visible: isVisible });
         });
     };
 
+    const handleCreateFarmer = async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = Object.fromEntries(formData.entries());
 
-   const handleCreateFarmer = async (e) => {
-       e.preventDefault();
-       const formData = new FormData(e.target);
-       const data = Object.fromEntries(formData.entries());
+        // 1. STRICT PHILIPPINE MOBILE PHONE SEGMENTATION & FORMATTING
+        let cleanContact = data.contactNo.replace(/\D/g, ''); // Tanggalin lahat ng non-numbers
 
-       try {
-           // 1. Create Auth User
-           const { data: authData, error: authError } = await supabase.auth.signUp({
-               email: data.email,
-               password: data.password,
-               options: { data: { full_name: data.fullName } }
-           });
+        // Kung nag-input si Admin ng simula sa 9 at saktong 10 characters, dugtungan natin ng 63 sa unahan
+        if (cleanContact.startsWith('9') && cleanContact.length === 10) {
+            cleanContact = '63' + cleanContact;
+        } else {
+            alert("Validation Error: Mobile entry must be exactly 10 digits and start with 9.");
+            return;
+        }
 
-           if (authError) throw authError;
+        // Hatakin ang value ng hidden inputs na binabago ng Leaflet pin mo
+        const latVal = parseFloat(document.getElementById('farmer-lat').value);
+        const lngVal = parseFloat(document.getElementById('farmer-lng').value);
 
-           // 2. Insert details into 'users' table
-           const { error: dbError } = await supabase.from('users').insert([
-               {
-                   id: authData.user.id,
-                   full_name: data.fullName,
-                   email: data.email,
-                   address: data.address,
-                   farm_name: data.farmName,
-                   contact_no: data.contactNo,
-                   role: 'farmer'
-               }
-           ]);
+        try {
+            // 2. INCREMENTAL SEQUENTIAL FARMER ID GENERATOR
+            const currentYearPrefix = new Date().getFullYear().toString().slice(-2); // Kumuha ng "26" para sa 2026
 
-           if (dbError) throw dbError;
-            // Send SMS text reminder to the farmer via Semaphore API
+            // Bilangin kung ilan na ang farmers sa database na may katulad na year prefix code
+            const { data: idSequenceData, error: idSequenceError } = await supabase
+                .from('users')
+                .select('farmer_id')
+                .eq('role', 'farmer')
+                .like('farmer_id', `${currentYearPrefix}-%`);
+
+            if (idSequenceError) throw idSequenceError;
+
+            const nextCount = (idSequenceData ? idSequenceData.length : 0) + 1;
+            const autoGeneratedFarmerId = `${currentYearPrefix}-${nextCount.toString().padStart(4, '0')}`; // Halimbawa: "26-0001"
+
+            const { data: authData, error: authError } = await supabase.auth.signUp({
+                email: data.email,
+                password: data.password,
+                options: { data: { full_name: data.fullName } }
+            });
+
+            if (authError) throw authError;
+
+            // I-save sa database table, kasama ang auto-generated at formatted contact attributes
+            const { error: dbError } = await supabase.from('users').insert([
+                {
+                    id: authData.user.id,
+                    farmer_id: autoGeneratedFarmerId, // Inilalagay ang dynamic sequence value
+                    full_name: data.fullName,
+                    email: data.email,
+                    address: data.address,
+                    farm_name: data.farmName,
+                    contact_no: cleanContact, // Dynamic format node entries (e.g. 639XXXXXXXXX)
+                    role: 'farmer',
+                    latitude: latVal,
+                    longitude: lngVal
+                }
+            ]);
+
+            if (dbError) throw dbError;
+
             try {
-                const smsMessage = `Hi ${data.fullName}, your LPMPC Farmer account has been successfully created! Please check your email (${data.email}) for your login credentials and important instructions. - LPMPC PinaQualify`;
+                const smsMessage = `Hi ${data.fullName}, your LPMPC Farmer account has been successfully created! Please check your email (${data.email}) for your login credentials. - LPMPC PinaQualify`;
                 const smsBody = new URLSearchParams({
                     apikey: '3d81194ec2cf0d9b33c8221724d35887',
-                    number: data.contactNo,
+                    number: cleanContact,
                     message: smsMessage
                 });
 
-                 const smsRes = await fetch('/api/semaphore/api/v4/messages', {
-                     method: 'POST',
-                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                     body: smsBody.toString()
-                 });
-                 const smsResult = await smsRes.json();
-                 console.log('Semaphore SMS response:', smsResult);
+                await fetch('/api/semaphore/api/v4/messages', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: smsBody.toString()
+                });
             } catch (smsErr) {
                 console.warn('SMS notification failed:', smsErr.message);
             }
 
-            // Send email with temporary password via EmailJS
             try {
                 await emailjs.send('service_bxxlbqj', 'template_bs6zso6', {
                     email: data.email,
@@ -544,19 +566,126 @@ const AdminDashboard = () => {
                     farmer_email: data.email,
                     temp_password: data.password
                 }, '80xVnHaUIC6d2lJ5l');
-                console.log('EmailJS: Farmer notification email sent successfully');
             } catch (emailErr) {
                 console.warn('Email notification failed:', emailErr);
             }
 
-           alert("Farmer account created successfully!");
-           document.querySelector('[data-bs-dismiss="modal"]').click();
-           e.target.reset();
-       } catch (err) {
-           alert("Error: " + err.message);
-       }
-   };
+            alert(`Farmer account created successfully! System Assigned ID: ${autoGeneratedFarmerId}`);
+            document.querySelector('[data-bs-dismiss="modal"]').click();
+            e.target.reset();
+        } catch (err) {
+            alert("Error: " + err.message);
+        }
+    };
 
+    const mapRef = useRef(null);
+    const markerRef = useRef(null);
+    const geocoderInstanceRef = useRef(null);
+
+    useEffect(() => {
+        const modalEl = document.getElementById('addFarmerModal');
+
+        const initMap = () => {
+            if (mapRef.current) return;
+
+            mapRef.current = window.L.map('farmer-map').setView([14.1369, 122.9813], 14);
+            window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
+
+            markerRef.current = window.L.marker([14.1369, 122.9813], { draggable: true }).addTo(mapRef.current);
+
+            document.getElementById('farmer-lat').value = 14.1369;
+            document.getElementById('farmer-lng').value = 122.9813;
+
+            const reverseGeocode = async (lat, lng) => {
+                try {
+                    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+                    const data = await res.json();
+                    if (data && data.display_name) {
+                        document.getElementById('farmer-address').value = data.display_name;
+                    }
+                } catch (err) {
+                    console.error("Error reverse geocoding:", err);
+                }
+            };
+
+            markerRef.current.on('dragend', async () => {
+                const position = markerRef.current.getLatLng();
+                document.getElementById('farmer-lat').value = position.lat;
+                document.getElementById('farmer-lng').value = position.lng;
+                await reverseGeocode(position.lat, position.lng);
+            });
+
+            if (window.L.Control.Geocoder) {
+                geocoderInstanceRef.current = window.L.Control.geocoder({
+                    defaultMarkGeocode: false
+                }).addTo(mapRef.current);
+
+                geocoderInstanceRef.current.on('markgeocode', function (e) {
+                    const latlng = e.geocode.center;
+                    const addressName = e.geocode.name;
+
+                    mapRef.current.setView(latlng, 16);
+                    markerRef.current.setLatLng(latlng);
+
+                    document.getElementById('farmer-lat').value = latlng.lat;
+                    document.getElementById('farmer-lng').value = latlng.lng;
+                    document.getElementById('farmer-address').value = addressName;
+                });
+            }
+        };
+
+        const onShow = () => {
+            setTimeout(() => {
+                initMap();
+                if (mapRef.current) {
+                    mapRef.current.invalidateSize();
+                }
+            }, 300);
+        };
+
+        modalEl.addEventListener('shown.bs.modal', onShow);
+        return () => modalEl.removeEventListener('shown.bs.modal', onShow);
+    }, []);
+
+    const handleAddressKeyDown = async (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+
+            const queryText = e.target.value.trim();
+            if (!queryText) return;
+
+            try {
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryText)}&limit=1`);
+                const results = await response.json();
+
+                if (results && results.length > 0) {
+                    const firstResult = results[0];
+                    const lat = parseFloat(firstResult.lat);
+                    const lng = parseFloat(firstResult.lon);
+                    const latlng = [lat, lng];
+
+                    if (mapRef.current) {
+                        mapRef.current.setView(latlng, 16);
+                    }
+
+                    if (markerRef.current) {
+                        markerRef.current.setLatLng(latlng);
+                    }
+
+                    document.getElementById('farmer-lat').value = lat;
+                    document.getElementById('farmer-lng').value = lng;
+
+                    document.getElementById('farmer-address').value = firstResult.display_name;
+
+                } else {
+                    alert("Can't find location. Try again or put the specific address.");
+                }
+            } catch (err) {
+                console.error("Error searching address via Nominatim:", err);
+                alert("Error finding location. Try again.");
+            }
+        }
+    };
 
     return (
         <div className="admin-layout admin-layout-wrapper">
@@ -672,7 +801,7 @@ const AdminDashboard = () => {
                                     <table className="table table-hover align-middle mb-0" style={{ minWidth: '700px' }}>
                                         <thead className="table-light text-uppercase small fw-bold">
                                             <tr>
-                                                <th className="ps-4">Batch ID</th> {/* Bagong Column */}
+                                                <th className="ps-4">Batch ID</th>
                                                 <th>Farm Name</th>
                                                 <th>Owner / Contact</th>
                                                 <th className="d-none d-md-table-cell">Contact Number</th>
@@ -696,7 +825,7 @@ const AdminDashboard = () => {
 
                                                 return (
                                                     <tr key={farm.id}>
-                                                        <td className="ps-4 fw-bold">{farm.batch_id}</td> {/* Data ng Batch ID */}
+                                                        <td className="ps-4 fw-bold">{farm.batch_id}</td>
                                                         <td>{farm.farm_name}</td>
                                                         <td>{farm.owner_name}</td>
                                                         <td>{farm.contact_number}</td>
@@ -730,7 +859,7 @@ const AdminDashboard = () => {
                                     width: '60px',
                                     height: '60px',
                                     zIndex: 1000,
-                                    backgroundColor: '#468432', // LPMPC Green Theme
+                                    backgroundColor: '#468432',
                                     color: '#ffffff',
                                     fontSize: '24px'
                                 }}
@@ -884,8 +1013,8 @@ const AdminDashboard = () => {
                                                             </td>
                                                             <td className="py-3 text-center">
                                                                 <span className={`badge rounded-pill px-2 py-1 ${fiber.status === 'Optimal' ? 'bg-success bg-opacity-10 text-success' :
-                                                                        fiber.status === 'Low Stock' ? 'bg-warning bg-opacity-10 text-warning' :
-                                                                            'bg-danger bg-opacity-10 text-danger'
+                                                                    fiber.status === 'Low Stock' ? 'bg-warning bg-opacity-10 text-warning' :
+                                                                        'bg-danger bg-opacity-10 text-danger'
                                                                     }`} style={{ fontSize: '0.65rem' }}>
                                                                     {fiber.status}
                                                                 </span>
@@ -1388,20 +1517,17 @@ const AdminDashboard = () => {
                  .text-lpmpc { color: #468432; }
                  .table-sm td, .table-sm th { padding: 0.5rem; }
 
-                 /* Vis Timeline CSS Custom Styling rules targeting element node colors */
                  .vis-item.bar-veg {
                       background-color: #28a745 !important;
                       border-color: #1e7e34 !important;
                       color: #ffffff !important;
                       font-weight: bold !important;
                   }
-
                   .vis-item.bar-flow {
                       background-color: #e83e8c !important;
                       border-color: #d63384 !important;
                       color: #ffffff !important;
                   }
-
                  .vis-item.bar-maturation {
                      background-color: #ffc107 !important;
                      border-color: #d39e00 !important;
@@ -1583,7 +1709,20 @@ const AdminDashboard = () => {
                                 </div>
                                 <div className="mb-2">
                                     <label className="small fw-bold text-muted">ADDRESS</label>
-                                    <input type="text" name="address" className="form-control rounded-0" required />
+                                    <input
+                                        type="text"
+                                        id="farmer-address"
+                                        name="address"
+                                        className="form-control rounded-0"
+                                        onKeyDown={handleAddressKeyDown}
+                                        placeholder="Type address & press ENTER to search, or drag map marker..."
+                                        required
+                                    />
+
+                                    <input type="hidden" id="farmer-lat" name="latitude" />
+                                    <input type="hidden" id="farmer-lng" name="longitude" />
+
+                                    <div id="farmer-map" style={{ height: '300px', width: '100%', marginTop: '10px' }}></div>
                                 </div>
                                 <div className="mb-2">
                                     <label className="small fw-bold text-muted">FARM NAME</label>
@@ -1591,7 +1730,14 @@ const AdminDashboard = () => {
                                 </div>
                                 <div className="mb-3">
                                     <label className="small fw-bold text-muted">CONTACT NUMBER</label>
-                                    <input type="text" name="contactNo" className="form-control rounded-0" required />
+                                    <input
+                                        type="text"
+                                        name="contactNo"
+                                        className="form-control rounded-0"
+                                        maxLength={10}
+                                        placeholder="9XXXXXXXXX"
+                                        required
+                                    />
                                 </div>
                                 <div className="mb-3">
                                     <label className="small fw-bold text-muted">PASSWORD</label>
