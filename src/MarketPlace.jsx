@@ -16,30 +16,29 @@ const App = () => {
     const [address, setAddress] = useState('');
     const [user, setUser] = useState(null);
 
-    // PRODUCT AND ORDER STATES
-    const [selectedProduct, setSelectedProduct] = useState({ title: '', price: 0 });
-    const [isCustomized, setIsCustomized] = useState(false);
-    const [quantity, setQuantity] = useState(1);
+    // BASE FIBER UNIT PRICE
+    const PRICE_PER_KG = 650;
 
-    // CUSTOMIZATION STATES
-    const [customUnits, setCustomUnits] = useState([
-        { id: 1, qty: 1, bust: '', waist: '', length: '' }
-    ]);
-    const [orderDesign, setOrderDesign] = useState({ file: null, preview: null });
+    // DECORTICATED FIBER PRODUCTS (PNS/BAFS 318:2021)
+    const fiberProducts = [
+        { grade: "PID-1", title: "PID-1", img: "/pinacloth.jpg", desc: "Premium grade decorticated Queen Pineapple fiber with superior luster and high tensile strength." },
+        { grade: "PID-2", title: "PID-2", img: "/pinacloth.jpg", desc: "Selected grade decorticated fiber suitable for fine blending, crafts, and high-grade composites." },
+        { grade: "PID-3", title: "PID-3", img: "/pinacloth.jpg", desc: "Standard commercial grade decorticated fiber used for twines, ropes, and industrial applications." },
+        { grade: "PID-4", title: "PID-4", img: "/pinacloth.jpg", desc: "Residual decorticated fiber utilized for pulp, heavy reinforcement, and eco-composites." }
+    ];
+
+    // PRODUCT AND ORDER STATES
+    const [selectedProduct, setSelectedProduct] = useState(fiberProducts[0]);
+    const [weightKg, setWeightKg] = useState(1); // Default 1 kg order
     const [orderNotes, setOrderNotes] = useState('');
 
-    // LIVE ORDER HISTORY STATES (FIXED CRASH)
+    // LIVE ORDER HISTORY STATES
     const [customerOrders, setCustomerOrders] = useState([]);
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [isOrdersLoading, setIsOrdersLoading] = useState(false);
 
-    // CALCULATIONS
-    const totalQuantityInTable = customUnits.reduce((sum, unit) => sum + (Number(unit.qty) || 0), 0);
-    const totalItems = totalQuantityInTable > 0 ? totalQuantityInTable : 1;
-
-    const basePrice = Number(selectedProduct.price) || 0;
-    const customizationFee = 150 * totalItems;
-    const finalTotal = (basePrice * totalItems) + customizationFee;
+    // CALCULATIONS FOR BULK WEIGHT AT ₱650/KG
+    const finalTotal = (Number(weightKg) || 1) * PRICE_PER_KG;
 
     // FETCH REAL-TIME CLIENT ORDERS
     const fetchCustomerOrderHistory = async (nameFilter) => {
@@ -59,7 +58,6 @@ const App = () => {
 
             setCustomerOrders(data || []);
             if (data && data.length > 0) {
-                // Preserves selected item focus accurately
                 setSelectedOrder(prev => {
                     if (!prev) return data[0];
                     const updated = data.find(o => o.id === prev.id);
@@ -76,66 +74,36 @@ const App = () => {
     };
 
     // REALTIME CUSTOMER FEED SYNC ACTION
-        useEffect(() => {
-            if (!fullName) return;
+    useEffect(() => {
+        if (!fullName) return;
 
-            fetchCustomerOrderHistory(fullName);
+        fetchCustomerOrderHistory(fullName);
 
-            const channel = supabase
-                .channel('customer-orders-global-sync')
-                .on(
-                    'postgres_changes',
-                    { event: '*', schema: 'public', table: 'orders' },
-                    (payload) => {
-                        if (payload.new && payload.new.customer_name === fullName) {
-                            console.log("Live update caught for this customer!", payload);
-                            fetchCustomerOrderHistory(fullName);
-                        }
+        const channel = supabase
+            .channel('customer-orders-global-sync')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'orders' },
+                (payload) => {
+                    if (payload.new && payload.new.customer_name === fullName) {
+                        console.log("Live update caught for this customer!", payload);
+                        fetchCustomerOrderHistory(fullName);
                     }
-                )
-                .subscribe();
+                }
+            )
+            .subscribe();
 
-            return () => {
-                supabase.removeChannel(channel);
-            };
-        }, [fullName]);
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [fullName]);
 
     // HANDLERS
-    const handleAddUnit = () => {
-        const newId = customUnits.length > 0 ? Math.max(...customUnits.map(u => u.id)) + 1 : 1;
-        setCustomUnits([...customUnits, { id: newId, qty: 1, bust: '', waist: '', length: '' }]);
-    };
-
-    const handleDeleteUnit = (id) => {
-        if (customUnits.length > 1) {
-            setCustomUnits(customUnits.filter(unit => unit.id !== id));
-        } else {
-            alert("At least one measurement set is required.");
-        }
-    };
-
-    const handleUnitChange = (id, field, value) => {
-        setCustomUnits(customUnits.map(unit =>
-            unit.id === id ? { ...unit, [field]: field === 'qty' ? Number(value) : value } : unit
-        ));
-    };
-
-    const handleOrderImage = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setOrderDesign({ file: file, preview: reader.result });
-            };
-            reader.readAsDataURL(file);
-        }
-    };
-
     const handlePlaceOrder = async () => {
         try {
             const currentCustomerName = fullName || "Anonymous Guest";
             const shippingMethodEl = document.getElementById('shippingMethod');
-            const deliveryMethodVal = shippingMethodEl ? shippingMethodEl.value : 'Standard Shipping (3-5 days)';
+            const deliveryMethodVal = shippingMethodEl ? shippingMethodEl.value : 'Standard Cargo Shipping';
 
             const { data: parentOrder, error: parentError } = await supabase
                 .from('orders')
@@ -152,19 +120,18 @@ const App = () => {
 
             if (parentError) throw parentError;
 
-            const orderItemsData = customUnits.map(unit => ({
+            const orderItemsData = [{
                 order_id: parentOrder.id,
                 item_name: selectedProduct.title,
-                fiber_type: "PID-Prime",
-                fiber_weight: 1.5,
+                fiber_type: selectedProduct.grade,
+                fiber_weight: Number(weightKg),
+                unit_price: PRICE_PER_KG,
                 measurements: {
-                    bust: unit.bust,
-                    waist: unit.waist,
-                    length: unit.length,
-                    qty: unit.qty
-                },
-                unit_price: selectedProduct.price
-            }));
+                    weight_kg: Number(weightKg),
+                    price_per_kg: PRICE_PER_KG,
+                    notes: orderNotes
+                }
+            }];
 
             const { error: itemsError } = await supabase
                 .from('order_items')
@@ -182,7 +149,7 @@ const App = () => {
 
         } catch (error) {
             console.error('Database Error:', error.message);
-            alert("Ops! May error sa pag-save ng order. Check console.");
+            alert("Error saving order. Check console.");
         }
     };
 
@@ -314,7 +281,7 @@ const App = () => {
                   <div className="collapse navbar-collapse" id="navbarNav">
                       <div className="navbar-nav ms-auto align-items-center">
                           <div className="navbar-nav ms-auto align-items-center">
-                              <a className="nav-link" href="#products">Products</a>
+                              <a className="nav-link" href="#products">Classified Fibers</a>
                               <a className="nav-link" href="#about">About Us</a>
                               <a className="nav-link" href="#contact">Contact</a>
 
@@ -350,7 +317,7 @@ const App = () => {
           {/* INTRO */}
           <section id="home" className="home-section">
               <div className="container">
-                  <h2 className="display-5 fw-bold lpmpc-green">Buy high-quality fabrics and cloths made of Queen Pineapple Fiber.</h2>
+                  <h2 className="display-5 fw-bold lpmpc-green">Buy high-quality, PNS-graded decorticated Queen Pineapple Fibers.</h2>
               </div>
           </section>
 
@@ -358,38 +325,35 @@ const App = () => {
           <section id="products" className="container my-5">
               <div className="mb-5">
 
-                <h2 className="display-5 text-center fw-bold lpmpc-green">Our Products</h2>
-                <p className="text-center text-muted">High-quality fabrics made of Queen Pineapple Fiber</p>
+                <h2 className="display-5 text-center fw-bold lpmpc-green">Classified Decorticated Fibers</h2>
+                <p className="text-center text-muted">Standardized baseline rate: <strong>₱650.00 / kg</strong></p>
 
-                {/* CUSTOM ORDER BUTTON */}
+                {/* BULK ORDER REQUEST BUTTON */}
                 <div className="d-flex justify-content-end mt-3">
                     <button
                         className="btn btn-outline-success px-4 py-2 rounded-pill fw-bold shadow-sm d-flex align-items-center"
                         data-bs-toggle="modal"
                         data-bs-target={user ? "#orderModal" : "#signupModal"}
                         onClick={() => {
-                            setSelectedProduct({ title: "Custom Tailored Request", price: 1000 });
-                            setIsCustomized(true);
+                            setSelectedProduct(fiberProducts[0]);
+                            setWeightKg(1);
                         }}
                       >
 
-                        <span className="material-symbols-outlined me-2" style={{fontSize: '1.2rem'}}>measuring_tape</span>Request Custom Order
+                        <span className="material-symbols-outlined me-2" style={{fontSize: '1.2rem'}}>scale</span>Purchase Bulk Fiber Batch
                     </button>
                 </div>
               </div>
 
               <div className="row g-4 text-start">
-                  {[
-                      { title: "Piña Alampay", img: "/alampay.jpg", desc: "Experience the Queen of Philippine Fabrics with our handcrafted Piña Alampay. Woven from premium, hand-scraped pineapple fibers." },
-                      { title: "Barong", img: "/barong.jpg", desc: "Hand-scraped pineapple fibers woven into a premier choice for graduates and formal events." },
-                      { title: "Piña Cloth", img: "/pinacloth.jpg", desc: "Dignified and elegant alternative to traditional stoles, handcrafted by the cooperative." }
-                  ].map((p, i) => (
-                      <div key={i} className="col-12 col-md-6 col-lg-4">
+                  {fiberProducts.map((p, i) => (
+                      <div key={i} className="col-12 col-md-6 col-lg-3">
                           <div className="card h-100 border-0 shadow-sm rounded-4 overflow-hidden">
-                              <img src={p.img} className="card-img-top" alt={p.title} style={{height: '250px', objectFit: 'cover'}} />
+                              <img src={p.img} className="card-img-top" alt={p.title} style={{height: '220px', objectFit: 'cover'}} />
 
                               <div className="card-body d-flex flex-column p-4">
-                                  <h3 className="h4 fw-bold">{p.title}</h3>
+                                  <h3 className="h5 fw-bold mb-1">{p.title}</h3>
+                                  <p className="text-success fw-bold fs-5 mb-2">₱650.00 <span className="fs-6 text-muted fw-normal">/ kg</span></p>
                                   <p className="text-muted small flex-grow-1">{p.desc}</p>
 
                                   {/* STANDARD ORDER BUTTON */}
@@ -398,11 +362,11 @@ const App = () => {
                                     data-bs-toggle="modal"
                                     data-bs-target={user ? "#orderModal" : "#signupModal"}
                                     onClick={() => {
-                                        setSelectedProduct({ title: p.title, price: p.price || 500 });
-                                        setIsCustomized(true);
+                                        setSelectedProduct(p);
+                                        setWeightKg(1);
                                     }}
                                   >
-                                    {user ? 'Add to Cart' : 'Order Now!'}
+                                    {user ? 'Select Fiber Grade' : 'Order Now!'}
                                   </button>
                               </div>
                           </div>
@@ -418,7 +382,7 @@ const App = () => {
                   <div className="row align-items-center g-5">
                       <div className="col-lg-6 reveal reveal-left">
                           <p>Labo Progressive Multi-Purpose Cooperative (LPMPC) is an agricultural cooperative that produces natural pineapple products like juice drink, dried fruit, fiber, and cloth.</p>
-                          <p>We are dedicated to uplifting local farmers by transforming Queen Pineapple leaves into world-class sustainable textiles through traditional craftsmanship.</p>
+                          <p>We are dedicated to uplifting local farmers by transforming Queen Pineapple leaves into world-class sustainable materials through automated quality grading.</p>
                       </div>
                       <div className="col-lg-6 reveal reveal-right">
                           <img src="/lpmpc.jpg" className="img-fluid rounded shadow-lg w-100" alt="About Us Image" style={{maxHeight: '400px', objectFit: 'cover'}} />
@@ -431,7 +395,7 @@ const App = () => {
           <section id="contact" className="reveal container my-5 py-5">
               <div className="text-center mb-5 reveal reveal-up">
                   <h2 className="display-5 fw-bold lpmpc-green">Get in Touch</h2>
-                  <p className="lead text-muted">Have questions about our Queen Pineapple products or our cooperative?</p>
+                  <p className="lead text-muted">Have questions about our Queen Pineapple fiber grades or our cooperative?</p>
               </div>
 
               <div className="row g-5 text-start">
@@ -491,7 +455,7 @@ const App = () => {
                   <div className="p-4 text-white" style={{ background: 'var(--lpmpc-green)' }}>
                       <div className="d-flex justify-content-between align-items-center">
                           <div>
-                              <h5 className="fw-bold m-0 text-uppercase small" style={{opacity: 0.8}}>Confirm Order</h5>
+                              <h5 className="fw-bold m-0 text-uppercase small" style={{opacity: 0.8}}>Confirm Fiber Order</h5>
                               <h4 className="fw-bold m-0">{selectedProduct.title}</h4>
                           </div>
                           <button type="button" className="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -500,66 +464,38 @@ const App = () => {
 
                   <div className="modal-body p-4 bg-white">
 
-                     {isCustomized && (
-                          <div className="reveal active">
-                              <div className="d-flex justify-content-between align-items-center mb-2">
-                                  <h6 className="fw-bold m-0 text-success">Measurement Sets</h6>
-                                  <button className="btn btn-sm btn-success rounded-pill px-3" onClick={handleAddUnit}>+ Add New Size Set</button>
-                              </div>
-                              <div className="table-responsive rounded-3 border mb-4">
-                                  <table className="table table-sm text-center mb-0" style={{fontSize: '0.85rem'}}>
-                                      <thead className="table-light">
-                                          <tr><th>SET</th><th style={{width: '80px'}}>QTY</th><th>BUST</th><th>WAIST</th><th>LENGTH</th></tr>
-                                      </thead>
-                                      <tbody>
-                                          {customUnits.map((unit) => (
-                                              <tr key={unit.id}>
-                                                  <td className="fw-bold text-success">#{unit.id}</td>
-                                                  <td>
-                                                      <input type="number" className="form-control form-control-sm text-center border-success"
-                                                          value={unit.qty} min="1" onChange={(e) => handleUnitChange(unit.id, 'qty', e.target.value)} />
-                                                  </td>
-                                                  <td><input type="text" className="form-control form-control-sm text-center" placeholder='0"' value={unit.bust} onChange={(e) => handleUnitChange(unit.id, 'bust', e.target.value)} /></td>
-                                                  <td><input type="text" className="form-control form-control-sm text-center" placeholder='0"' value={unit.waist} onChange={(e) => handleUnitChange(unit.id, 'waist', e.target.value)} /></td>
-                                                  <td><input type="text" className="form-control form-control-sm text-center" placeholder='0"' value={unit.length} onChange={(e) => handleUnitChange(unit.id, 'length', e.target.value)} /></td>
-                                                  <td>
-                                                      {/* DELETE BUTTON */}
-                                                      <button
-                                                          className="btn btn-sm text-danger d-flex align-items-center justify-content-center"
-                                                          onClick={() => handleDeleteUnit(unit.id)}
-                                                          title="Remove Set"
-                                                      >
-                                                          <span className="material-symbols-outlined" style={{fontSize: '1.2rem'}}>delete</span>
-                                                      </button>
-                                                  </td>
-                                              </tr>
-                                          ))}
-                                      </tbody>
-                                  </table>
-                              </div>
+                     {/* BULK WEIGHT SELECTOR */}
+                     <div className="reveal active mb-4">
+                         <div className="card border-0 bg-light p-4 rounded-4">
+                             <div className="row align-items-center">
+                                 <div className="col-md-6 mb-3 mb-md-0">
+                                     <label className="fw-bold text-dark mb-1 d-block">Weight in Kilograms (kg):</label>
+                                     <div className="input-group">
+                                         <button className="btn btn-outline-success" type="button" onClick={() => setWeightKg(prev => Math.max(0.5, prev - 0.5))}>-</button>
+                                         <input
+                                             type="number"
+                                             className="form-control text-center fw-bold border-success"
+                                             value={weightKg}
+                                             min="0.5"
+                                             step="0.5"
+                                             onChange={(e) => setWeightKg(Math.max(0.5, Number(e.target.value)))}
+                                         />
+                                         <span className="input-group-text fw-bold text-success bg-white border-success">kg</span>
+                                         <button className="btn btn-outline-success" type="button" onClick={() => setWeightKg(prev => prev + 0.5)}>+</button>
+                                     </div>
+                                 </div>
+                                 <div className="col-md-6 text-md-end">
+                                     <span className="small text-muted d-block">Unit Rate: ₱650.00 / kg</span>
+                                     <span className="h4 fw-bold text-success mb-0">Subtotal: ₱{finalTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                 </div>
+                             </div>
+                         </div>
 
-                              <div className="row g-3">
-                                  <div className="col-md-6">
-                                      <h6 className="fw-bold small text-muted text-uppercase">Design Reference (1 per order)</h6>
-                                      <div className="upload-container border-2 border-dashed rounded-4 p-3 text-center bg-light position-relative d-flex flex-column align-items-center justify-content-center" style={{minHeight: '140px'}}>
-                                          {orderDesign.preview ? (
-                                              <>
-                                                  <img src={orderDesign.preview} className="img-fluid rounded mb-2" style={{maxHeight: '80px'}} />
-                                                  <span className="small text-success fw-bold">Design Attached</span>
-                                              </>
-                                          ) : (
-                                              <><span className="material-symbols-outlined text-muted" style={{fontSize: '2rem'}}>add_a_photo</span><p className="small m-0">Upload Sketch</p></>
-                                          )}
-                                          <input type="file" className="position-absolute top-0 start-0 opacity-0 w-100 h-100" onChange={handleOrderImage} style={{cursor: 'pointer'}} />
-                                      </div>
-                                  </div>
-                                  <div className="col-md-6">
-                                      <h6 className="fw-bold small text-muted text-uppercase">Additional Instructions</h6>
-                                      <textarea className="form-control rounded-3" rows="5" placeholder="Fabric color, specific name embroidery, etc." value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} style={{fontSize: '0.85rem'}}></textarea>
-                                  </div>
-                              </div>
-                          </div>
-                      )}
+                         <div className="mt-3">
+                             <label className="fw-bold small text-muted text-uppercase mb-1">Processing Notes / Instructions</label>
+                             <textarea className="form-control rounded-3" rows="3" placeholder="Specific packaging requests or logistics requirements..." value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} style={{fontSize: '0.85rem'}}></textarea>
+                         </div>
+                     </div>
 
                   {/* SHIPPING DETAILS SECTION */}
                   <div className="mt-4 border-top pt-4">
@@ -584,7 +520,7 @@ const App = () => {
                           <div className="col-md-6">
                               <div className="form-floating">
                                   <select className="form-select border-success" id="shippingMethod">
-                                      <option value="standard">Standard Shipping (3-5 days)</option>
+                                      <option value="standard">Standard Cargo (3-5 days)</option>
                                       <option value="express">Express Delivery (1-2 days)</option>
                                       <option value="pickup">Store Pickup (Labo, CN)</option>
                                   </select>
@@ -621,10 +557,10 @@ const App = () => {
                               <h6 className="fw-bold mb-1 small text-dark">Important Notes:</h6>
                               <ul className="mb-0 text-muted" style={{ fontSize: '0.75rem', paddingLeft: '1.2rem' }}>
                                   <li className="mb-1">
-                                      <strong>Admin Verification:</strong> All orders are subject to fiber quality assessment. The admin will first verify if the available Queen Pineapple fiber is adequate for your specific request. If not, the order may be rejected to maintain quality standards.
+                                      <strong>Inventory Verification:</strong> All orders are subject to live stock availability. If warehouse stock is insufficient, the system will check local farm harvest predictions for leaf sourcing.
                                   </li>
                                   <li>
-                                      <strong>Timeline:</strong> Please note that the <strong>estimated shipping days do not include the preparation and weaving period</strong>. Handcrafting heritage fabrics takes time to ensure the highest quality.
+                                      <strong>Automated Rejection:</strong> If neither warehouse inventory nor local farms can cover the requested volume, the order will be automatically rejected.
                                   </li>
                               </ul>
                           </div>
@@ -639,7 +575,7 @@ const App = () => {
                                 className="fw-bold m-0"
                                 style={{ color: 'var(--lpmpc-green)' }}
                               >
-                                ₱{finalTotal.toLocaleString()}
+                                ₱{finalTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </h2>
                           </div>
                           <button
@@ -669,11 +605,11 @@ const App = () => {
                           <div className="mb-4">
                               <img src="/logo.png" alt="Logo" width="100" className="rounded-circle bg-white p-2 mb-3 shadow" />
                               <h2 className="display-6 fw-bold">Queen Pineapple Marketplace</h2>
-                              <p className="opacity-75">Connecting you to the finest handcrafted heritage fabrics of Labo.</p>
+                              <p className="opacity-75">Connecting you to PNS-certified decorticated fibers of Labo.</p>
                           </div>
 
                           <div className="mt-4 pt-4 border-top border-white border-opacity-25">
-                              <small>Support Local Farmers • Sustainable Fashion • Premium Quality</small>
+                              <small>Support Local Farmers • Standardized Grading • Premium Quality</small>
                           </div>
                       </div>
 
@@ -693,7 +629,7 @@ const App = () => {
                           <p className="text-muted" style={{ fontSize: '0.95rem', maxWidth: '90%' }}>
                             {view === 'login'
                               ? 'Please enter your details to login and access your account.'
-                              : 'Join our community to shop for handcrafted Queen Pineapple fabrics and track your orders.'}
+                              : 'Join our community to shop for certified Queen Pineapple decorticated fibers.'}
                           </p>
                       </div>
 
@@ -790,7 +726,6 @@ const App = () => {
                                     customerOrders.map((order) => {
                                         const isSelected = selectedOrder?.id === order.id;
 
-                                        // Custom color mapping for badges based on dynamic pipeline data
                                         let badgeClass = isSelected ? 'bg-white text-success' : 'bg-success';
                                         if (order.order_status === 'Received') {
                                             badgeClass = isSelected ? 'bg-white text-dark' : 'bg-secondary';
@@ -833,21 +768,15 @@ const App = () => {
                             <div className="col-lg-8 p-4 bg-white">
                                 {selectedOrder ? (
                                     (() => {
-                                        const primaryItem = selectedOrder.order_items?.[0] || {};
-                                        const specs = primaryItem.measurements || {};
-
-                                        const measurementString = specs.bust ? `${specs.bust}" / ${specs.waist}" / ${specs.length}"` : 'Standard Size';
-                                        const computedQty = selectedOrder.order_items?.reduce((acc, curr) => acc + (curr.measurements?.qty || 1), 0) || 1;
-
                                         const isTerminated = selectedOrder.order_status === 'Cancelled' || selectedOrder.order_status === 'Rejected';
 
-                                        const statusIndexMap = { 'Pending': 0, 'Confirmed': 1, 'Weaving': 2, 'In Production': 2, 'Shipping': 3, 'Received': 4 };
+                                        const statusIndexMap = { 'Pending': 0, 'Confirmed': 1, 'Processing': 2, 'In Transit': 3, 'Received': 4 };
                                         const currentProgressLevel = statusIndexMap[selectedOrder.order_status] ?? 0;
 
                                         const workflowSteps = [
                                             { label: 'Confirmed', icon: 'check_circle', done: !isTerminated && currentProgressLevel >= 1 },
-                                            { label: 'Weaving', icon: 'texture', done: !isTerminated && currentProgressLevel >= 2 },
-                                            { label: 'Shipping', icon: 'local_shipping', done: !isTerminated && currentProgressLevel >= 3 },
+                                            { label: 'Processing', icon: 'inventory_2', done: !isTerminated && currentProgressLevel >= 2 },
+                                            { label: 'In Transit', icon: 'local_shipping', done: !isTerminated && currentProgressLevel >= 3 },
                                             { label: 'Received', icon: 'handshake', done: !isTerminated && currentProgressLevel >= 4 }
                                         ];
 
@@ -878,7 +807,7 @@ const App = () => {
                                                     </div>
                                                 ) : (
                                                     <div className="card border-0 shadow-sm rounded-4 p-4 mb-4 bg-light">
-                                                        <h6 className="fw-bold mb-4 text-uppercase small text-muted">Real-time Production Status</h6>
+                                                        <h6 className="fw-bold mb-4 text-uppercase small text-muted">Real-time Order Status</h6>
                                                         <div className="d-flex justify-content-between position-relative">
                                                             <div className="position-absolute top-50 start-0 end-0 translate-middle-y bg-secondary-subtle" style={{height: '3px', zIndex: 0}}></div>
                                                             {workflowSteps.map((step, i) => (
@@ -901,9 +830,9 @@ const App = () => {
                                                         <table className="table table-borderless align-middle">
                                                             <thead className="table-light">
                                                                 <tr style={{fontSize: '0.75rem'}} className="text-muted">
-                                                                    <th>Product Description</th>
-                                                                    <th>Measurements (B/W/L)</th>
-                                                                    <th className="text-center">Total Unit Qty</th>
+                                                                    <th>Fiber Grade</th>
+                                                                    <th className="text-center">Ordered Weight (kg)</th>
+                                                                    <th className="text-center">Unit Price</th>
                                                                     <th className="text-end">Subtotal Price</th>
                                                                 </tr>
                                                             </thead>
@@ -911,13 +840,9 @@ const App = () => {
                                                                 {selectedOrder.order_items?.map((item, idx) => (
                                                                     <tr key={item.id || idx}>
                                                                         <td><span className="fw-bold text-dark">{item.item_name}</span></td>
-                                                                        <td>
-                                                                            <span className="badge bg-light text-secondary border">
-                                                                                {item.measurements?.bust ? `${item.measurements.bust}" / ${item.measurements.waist}" / ${item.measurements.length}"` : 'Standard'}
-                                                                            </span>
-                                                                        </td>
-                                                                        <td className="text-center">{item.measurements?.qty || 1}</td>
-                                                                        <td className="text-end fw-bold">₱{Number(item.unit_price * (item.measurements?.qty || 1)).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                                        <td className="text-center">{item.fiber_weight || item.measurements?.weight_kg || 1} kg</td>
+                                                                        <td className="text-center">₱{item.unit_price || PRICE_PER_KG} / kg</td>
+                                                                        <td className="text-end fw-bold">₱{Number((item.unit_price || PRICE_PER_KG) * (item.fiber_weight || item.measurements?.weight_kg || 1)).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                                                                     </tr>
                                                                 ))}
                                                             </tbody>

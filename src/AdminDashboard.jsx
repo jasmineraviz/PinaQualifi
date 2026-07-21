@@ -19,9 +19,12 @@ const AdminDashboard = () => {
     const [salesView, setSalesView] = useState('paid');
     const [bastosChartData, setBastosChartData] = useState({ labels: [], values: [] });
 
-    // STATE FOR REAL-TIME FARM DATA
+    // STATE FOR DYNAMIC INVENTORY & FARMS FROM SUPABASE
     const [farms, setFarms] = useState([]);
     const [isFarmsLoading, setIsFarmsLoading] = useState(true);
+    const [inventoryStock, setInventoryStock] = useState([]);
+    const [recentScannedBatches, setRecentScannedBatches] = useState([]);
+    const [isInventoryLoading, setIsInventoryLoading] = useState(true);
 
     const colorMap = {
         'PID-1': '#468432',
@@ -76,9 +79,10 @@ const AdminDashboard = () => {
     const [isLoading, setIsLoading] = useState(true);
 
     // DYNAMIC FILTER ENGINE
-    const cardPendingOrders = supabaseOrders.filter(o => o.order_status === 'Pending');
+    const cardPendingOrders = supabaseOrders.filter(o => o.order_status === 'Pending' || o.order_status === 'Pending Farmer Sourcing');
     const tableQueueOrders = supabaseOrders.filter(o =>
         o.order_status !== 'Pending' &&
+        o.order_status !== 'Pending Farmer Sourcing' &&
         o.order_status !== 'Rejected' &&
         o.order_status !== 'Cancelled'
     );
@@ -94,10 +98,10 @@ const AdminDashboard = () => {
 
     // LIVE WIDGETS COUNTER MATRIX
     const pendingCount = cardPendingOrders.length;
-    const productionCount = supabaseOrders.filter(o => o.order_status === 'Weaving' || o.order_status === 'Confirmed').length;
-    const completedCount = supabaseOrders.filter(o => o.order_status === 'Received' || o.order_status === 'Shipping').length;
+    const productionCount = supabaseOrders.filter(o => o.order_status === 'Processing' || o.order_status === 'Confirmed').length;
+    const completedCount = supabaseOrders.filter(o => o.order_status === 'Received' || o.order_status === 'In Transit').length;
 
-    // FETCHES ORDERS
+    // FETCHES ORDERS FROM DATABASE
     const fetchOrdersFromSupabase = async () => {
         try {
             setIsLoading(true);
@@ -134,6 +138,95 @@ const AdminDashboard = () => {
             console.error('Error fetching farm database data:', error.message);
         } finally {
             setIsFarmsLoading(false);
+        }
+    };
+
+    // FETCH DYNAMIC INVENTORY & LOGS FROM SUPABASE (WITH PID-R / RESIDUAL PARSING)
+    const fetchBastosInventory = async () => {
+        try {
+            setIsInventoryLoading(true);
+            const { data, error } = await supabase
+                .from('bastos_logs')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+
+            if (data) {
+                // 1. Calculate live weight balances per PID Grade
+                const gradeWeights = {
+                    'PID-1': 0,
+                    'PID-2': 0,
+                    'PID-3': 0,
+                    'PID-4': 0,
+                    'PID-R': 0
+                };
+
+                data.forEach((row) => {
+                    let rawGrade = row.grade ? row.grade.trim().toUpperCase() : '';
+                    let gradeKey = 'PID-R'; // Fallback default
+
+                    if (rawGrade.includes('PID-1')) gradeKey = 'PID-1';
+                    else if (rawGrade.includes('PID-2')) gradeKey = 'PID-2';
+                    else if (rawGrade.includes('PID-3')) gradeKey = 'PID-3';
+                    else if (rawGrade.includes('PID-4')) gradeKey = 'PID-4';
+                    else if (rawGrade.includes('PID-R') || rawGrade.includes('RESIDUAL')) gradeKey = 'PID-R';
+
+                    const bundleWeight = Number(row.weight || row.fiber_weight) || 0.5;
+                    gradeWeights[gradeKey] += bundleWeight;
+                });
+
+                // 2. Build Dynamic Stock Ledger Array for PID-1 through PID-R
+                const gradeMetadata = [
+                    { id: 'PID-1', name: 'PID-1' },
+                    { id: 'PID-2', name: 'PID-2' },
+                    { id: 'PID-3', name: 'PID-3' },
+                    { id: 'PID-4', name: 'PID-4' },
+                    { id: 'PID-R', name: 'PID-R' }
+                ];
+
+                const dynamicStockLedger = gradeMetadata.map(item => {
+                    const weightKg = gradeWeights[item.id] || 0;
+                    let status = 'Optimal';
+                    if (weightKg === 0) status = 'Out of Stock';
+                    else if (weightKg < 20) status = 'Low Stock';
+
+                    return {
+                        id: item.id,
+                        name: item.name,
+                        stockKg: weightKg,
+                        price: '₱650.00 / kg',
+                        status: status,
+                        score: item.id === 'PID-1' ? '95/100' : item.id === 'PID-2' ? '88/100' : item.id === 'PID-3' ? '80/100' : item.id === 'PID-4' ? '75/100' : '70/100'
+                    };
+                });
+
+                setInventoryStock(dynamicStockLedger);
+
+                // 3. Update Chart Dataset values (5-part wheel)
+                const labels = ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'];
+                const values = labels.map(g => gradeWeights[g] || 0);
+                setBastosChartData({ labels, values });
+
+                // 4. Set Recent Scanned Batches from Top 5 Scanned Logs
+                const recentLogs = data.slice(0, 5).map((log, idx) => {
+                    let rawGrade = log.grade ? log.grade.trim().toUpperCase() : 'PID-R';
+                    let cleanGrade = rawGrade;
+                    if (rawGrade.includes('PID-R') || rawGrade.includes('RESIDUAL')) cleanGrade = 'PID-R';
+
+                    return {
+                        id: log.batch_id || `BAT-2026-${String(log.id || idx + 1).padStart(3, '0')}`,
+                        grade: cleanGrade,
+                        score: log.score ? `${log.score}/100` : '92/100',
+                        timestamp: log.created_at ? new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'
+                    };
+                });
+                setRecentScannedBatches(recentLogs);
+            }
+        } catch (error) {
+            console.error('Error fetching dynamic inventory from bastos_logs:', error.message);
+        } finally {
+            setIsInventoryLoading(false);
         }
     };
 
@@ -209,7 +302,7 @@ const AdminDashboard = () => {
 
         const bastosChannel = supabase
             .channel('admin-bastos-sync')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bastos_logs' }, () => {
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'bastos_logs' }, () => {
                 fetchBastosInventory();
             })
             .subscribe();
@@ -242,21 +335,69 @@ const AdminDashboard = () => {
         };
     }, []);
 
-    // APPROVE ORDER
-    const handleApproveOrder = async (orderId) => {
-        try {
-            const { error } = await supabase
-                .from('orders')
-                .update({ order_status: 'Confirmed' })
-                .eq('id', orderId);
+    // AUTOMATED APPROVE/SOURCING/REJECT LOGIC
+    const handleApproveOrder = async (order) => {
+        const primaryItem = order.order_items?.[0] || {};
+        let orderedGrade = primaryItem.fiber_type ? primaryItem.fiber_type.trim().toUpperCase() : 'PID-1';
+        if (orderedGrade.includes('PID-R') || orderedGrade.includes('RESIDUAL')) orderedGrade = 'PID-R';
 
-            if (error) throw error;
-        } catch (error) {
-            alert("Error approving market data: " + error.message);
+        const orderedWeight = Number(primaryItem.fiber_weight) || 1.0;
+
+        // Check Warehouse Inventory from live database state
+        const targetStock = inventoryStock.find(item => item.id === orderedGrade);
+        const availableWarehouseKg = targetStock ? targetStock.stockKg : 0;
+
+        if (availableWarehouseKg >= orderedWeight) {
+            // Sufficient Warehouse Stock
+            try {
+                const { error } = await supabase
+                    .from('orders')
+                    .update({ order_status: 'Confirmed' })
+                    .eq('id', order.id);
+
+                if (error) throw error;
+                alert(`Order APPROVED! Warehouse stock allocated (${availableWarehouseKg} kg available).`);
+            } catch (error) {
+                alert("Error approving order: " + error.message);
+            }
+        } else {
+            // Deficit: Check Registered Farm Sourcing Timelines
+            const availableFarms = farms.filter(f =>
+                (f.status_name === 'Harvesting' || f.status_name === 'Maturation')
+            );
+
+            if (availableFarms.length > 0) {
+                // Farms Available: Route to Leaf Outsourcing
+                try {
+                    const { error } = await supabase
+                        .from('orders')
+                        .update({ order_status: 'Pending Farmer Sourcing' })
+                        .eq('id', order.id);
+
+                    if (error) throw error;
+                    alert(`Stock Deficit (${availableWarehouseKg} kg in stock vs ${orderedWeight} kg requested). Order routed to Leaf Outsourcing from ${availableFarms.length} active prospect farm(s).`);
+                } catch (error) {
+                    alert("Error processing sourcing route: " + error.message);
+                }
+            } else {
+                // AUTOMATED ORDER REJECTION PROTOCOL
+                alert(`AUTOMATED ORDER REJECTION PROTOCOL TRIGGERED!\n\nReason: Warehouse inventory is deficient (${availableWarehouseKg} kg) and NO registered farms currently have harvestable leaves available.`);
+
+                try {
+                    const { error } = await supabase
+                        .from('orders')
+                        .update({ order_status: 'Rejected' })
+                        .eq('id', order.id);
+
+                    if (error) throw error;
+                } catch (error) {
+                    alert("Error updating rejection status: " + error.message);
+                }
+            }
         }
     };
 
-    // REJECT ORDER
+    // MANUAL REJECT ORDER
     const handleRejectOrder = async (orderId) => {
         if (window.confirm("Are you sure you want to reject this request? Entry will be preserved for customer history.")) {
             try {
@@ -285,41 +426,6 @@ const AdminDashboard = () => {
         }
     };
 
-    const fetchBastosInventory = async () => {
-        try {
-            const { data, error } = await supabase
-                .from('bastos_logs')
-                .select('grade');
-
-            if (error) throw error;
-
-            if (data) {
-                const logCounts = data.reduce((acc, row) => {
-                    let fiberGrade = row.grade ? row.grade.trim().toUpperCase() : 'PID-R';
-                    if (fiberGrade === 'PID-R (RESIDUAL)') {
-                        fiberGrade = 'PID-R';
-                    }
-
-                    acc[fiberGrade] = (acc[fiberGrade] || 0) + 1;
-                    return acc;
-                }, {});
-
-                const expectedGrades = ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'];
-                const labels = [];
-                const values = [];
-
-                expectedGrades.forEach(grade => {
-                    labels.push(grade);
-                    values.push(logCounts[grade] || 0);
-                });
-
-                setBastosChartData({ labels, values });
-            }
-        } catch (error) {
-            console.error('Error fetching inventory from bastos_logs:', error.message);
-        }
-    };
-
     useEffect(() => {
         const now = new Date().toLocaleDateString('en-PH', {
             weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
@@ -344,6 +450,7 @@ const AdminDashboard = () => {
             });
         }
 
+        // DOUGHNUT CHART (THE WHEEL WITH PID-1 to PID-R)
         if (chartCanvas.current && !chartRef.current) {
             chartRef.current = new Chart(chartCanvas.current, {
                 type: 'doughnut',
@@ -370,8 +477,8 @@ const AdminDashboard = () => {
                             labels: {
                                 usePointStyle: true,
                                 pointStyle: 'circle',
-                                padding: 20,
-                                font: { family: "'Montserrat', sans-serif", size: 12, weight: '600' },
+                                padding: 15,
+                                font: { family: "'Montserrat', sans-serif", size: 11, weight: '600' },
                                 color: '#1e1e24'
                             }
                         }
@@ -485,10 +592,8 @@ const AdminDashboard = () => {
         const formData = new FormData(e.target);
         const data = Object.fromEntries(formData.entries());
 
-        // 1. STRICT PHILIPPINE MOBILE PHONE SEGMENTATION & FORMATTING
-        let cleanContact = data.contactNo.replace(/\D/g, ''); // Tanggalin lahat ng non-numbers
+        let cleanContact = data.contactNo.replace(/\D/g, '');
 
-        // Kung nag-input si Admin ng simula sa 9 at saktong 10 characters, dugtungan natin ng 63 sa unahan
         if (cleanContact.startsWith('9') && cleanContact.length === 10) {
             cleanContact = '63' + cleanContact;
         } else {
@@ -496,15 +601,12 @@ const AdminDashboard = () => {
             return;
         }
 
-        // Hatakin ang value ng hidden inputs na binabago ng Leaflet pin mo
         const latVal = parseFloat(document.getElementById('farmer-lat').value);
         const lngVal = parseFloat(document.getElementById('farmer-lng').value);
 
         try {
-            // 2. INCREMENTAL SEQUENTIAL FARMER ID GENERATOR
-            const currentYearPrefix = new Date().getFullYear().toString().slice(-2); // Kumuha ng "26" para sa 2026
+            const currentYearPrefix = new Date().getFullYear().toString().slice(-2);
 
-            // Bilangin kung ilan na ang farmers sa database na may katulad na year prefix code
             const { data: idSequenceData, error: idSequenceError } = await supabase
                 .from('users')
                 .select('farmer_id')
@@ -514,7 +616,7 @@ const AdminDashboard = () => {
             if (idSequenceError) throw idSequenceError;
 
             const nextCount = (idSequenceData ? idSequenceData.length : 0) + 1;
-            const autoGeneratedFarmerId = `${currentYearPrefix}-${nextCount.toString().padStart(4, '0')}`; // Halimbawa: "26-0001"
+            const autoGeneratedFarmerId = `${currentYearPrefix}-${nextCount.toString().padStart(4, '0')}`;
 
             const { data: authData, error: authError } = await supabase.auth.signUp({
                 email: data.email,
@@ -524,16 +626,15 @@ const AdminDashboard = () => {
 
             if (authError) throw authError;
 
-            // I-save sa database table, kasama ang auto-generated at formatted contact attributes
             const { error: dbError } = await supabase.from('users').insert([
                 {
                     id: authData.user.id,
-                    farmer_id: autoGeneratedFarmerId, // Inilalagay ang dynamic sequence value
+                    farmer_id: autoGeneratedFarmerId,
                     full_name: data.fullName,
                     email: data.email,
                     address: data.address,
                     farm_name: data.farmName,
-                    contact_no: cleanContact, // Dynamic format node entries (e.g. 639XXXXXXXXX)
+                    contact_no: cleanContact,
                     role: 'farmer',
                     latitude: latVal,
                     longitude: lngVal
@@ -695,7 +796,7 @@ const AdminDashboard = () => {
                     {/* SIDE NAVIGATION LAYOUT */}
                     <nav className="col-md-3 col-lg-2 bg-lpmpc-green vh-100 position-fixed shadow-sm">
                         <div className="p-4 border-bottom border-white border-opacity-25">
-                            <h4 className="fw-bold m-0 text-gold">LPMPC</h4>
+                            <h4 className="fw-bold m-0 text-gold">LPMPC Admin</h4>
                         </div>
                         <div className="nav flex-column mt-md-3">
                             <button className={`admin-tab-btn ${activeTab === 'v-dash' ? 'active' : ''}`} onClick={() => setActiveTab('v-dash')}>
@@ -708,7 +809,7 @@ const AdminDashboard = () => {
                                 <span className="material-symbols-outlined">inventory</span> INVENTORY
                             </button>
                             <button className={`admin-tab-btn ${activeTab === 'v-order' ? 'active' : ''}`} onClick={() => setActiveTab('v-order')}>
-                                <span className="material-symbols-outlined">shopping_bag</span> ORDER
+                                <span className="material-symbols-outlined">shopping_bag</span> ORDERS
                             </button>
                             <button className={`admin-tab-btn ${activeTab === 'v-sales' ? 'active' : ''}`} onClick={() => setActiveTab('v-sales')}>
                                 <span className="material-symbols-outlined">payments</span> SALES
@@ -731,9 +832,9 @@ const AdminDashboard = () => {
 
                             <div className="row g-3 mb-5">
                                 {[
-                                    { label: 'Total Sales', count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`, color: '#468432' },
-                                    { label: 'Active Farms', count: isFarmsLoading ? '...' : farms.length, color: '#b59a00' },
-                                    { label: 'Current Market Orders', count: isLoading ? '...' : supabaseOrders.length, color: '#6c757d' }
+                                    { label: 'Total Sales Revenue', count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`, color: '#468432' },
+                                    { label: 'Registered Prospect Farms', count: isFarmsLoading ? '...' : farms.length, color: '#b59a00' },
+                                    { label: 'Total Fiber Orders', count: isLoading ? '...' : supabaseOrders.length, color: '#6c757d' }
                                 ].map((w, i) => (
                                     <div className="col-12 col-sm-4" key={i}>
                                         <div className="p-4 bg-white border border-light shadow-sm h-100 rounded-0 border-bottom border-3" style={{ borderBottom: `3px solid ${w.color}` }}>
@@ -748,7 +849,7 @@ const AdminDashboard = () => {
                                 <div className="col-12 col-lg-7">
                                     <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white h-100" style={{ minHeight: '300px' }}>
                                         <div className="mb-4">
-                                            <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>Sales Income (Monthly)</h6>
+                                            <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>Sales Revenue (Monthly)</h6>
                                         </div>
                                         <div className="flex-grow-1" style={{ position: 'relative', height: '100%' }}>
                                             <canvas ref={salesChartCanvas}></canvas>
@@ -757,7 +858,7 @@ const AdminDashboard = () => {
                                 </div>
                                 <div className="col-12 col-lg-5">
                                     <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white h-100" style={{ minHeight: '300px' }}>
-                                        <h6 className="fw-bold text-uppercase mb-4 lpmpc-green" style={{ fontSize: '0.85rem' }}>Yield Distribution</h6>
+                                        <h6 className="fw-bold text-uppercase mb-4 lpmpc-green" style={{ fontSize: '0.85rem' }}>Fiber Inventory Distribution</h6>
                                         <div className="flex-grow-1" style={{ position: 'relative', height: '100%' }}>
                                             <canvas ref={chartCanvas}></canvas>
                                         </div>
@@ -770,8 +871,8 @@ const AdminDashboard = () => {
                         <div className={`admin-tab-content ${activeTab !== 'v-farm' ? 'd-none' : ''}`}>
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
                                 <div>
-                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">FARM MANAGEMENT</h2>
-                                    <p className="text-muted m-0 small">Dynamic tracking of growth and harvest cycles</p>
+                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">FARM SOURCING MANAGEMENT</h2>
+                                    <p className="text-muted m-0 small">Tracking Queen Pineapple crop growth and harvest timelines</p>
                                 </div>
                                 <div className="date-display fw-bold text-uppercase small text-lpmpc">{dateStr}</div>
                             </div>
@@ -795,7 +896,7 @@ const AdminDashboard = () => {
 
                             <div className="card border rounded-0 shadow-sm bg-white no-hover mt-4">
                                 <div className="card-header bg-light border-bottom rounded-0 py-3">
-                                    <h5 className="fw-bold m-0 small text-uppercase">Active Farm Batches</h5>
+                                    <h5 className="fw-bold m-0 small text-uppercase">Active Prospect Farms</h5>
                                 </div>
                                 <div className="table-responsive">
                                     <table className="table table-hover align-middle mb-0" style={{ minWidth: '700px' }}>
@@ -811,7 +912,7 @@ const AdminDashboard = () => {
                                         </thead>
                                         <tbody>
                                             {isFarmsLoading ? (
-                                                <tr><td colSpan="6" className="text-center">Syncing...</td></tr>
+                                                <tr><td colSpan="6" className="text-center">Syncing farm database...</td></tr>
                                             ) : farms.map((farm) => {
                                                 const s = (farm.status_name || 'vegetative').toLowerCase();
 
@@ -871,26 +972,27 @@ const AdminDashboard = () => {
 
                         </div>
 
-                        {/* [TAB 3] : INVENTORY TAB LAYOUT */}
+                        {/* [TAB 3] : INVENTORY TAB LAYOUT (PID-1 to PID-R) */}
                         <div className={`admin-tab-content ${activeTab !== 'v-inv' ? 'd-none' : ''}`}>
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
                                 <div>
-                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">Fiber Inventory</h2>
-                                    <p className="text-muted m-0 small">Quality Grading System • Grading & Texture</p>
+                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">Decorticated Fiber Inventory</h2>
+                                    <p className="text-muted m-0 small">PNS/BAFS 318:2021 Automated Visual Grading & Stock Ledger</p>
                                 </div>
                                 <div className="date-display fw-bold text-uppercase small text-lpmpc">{dateStr}</div>
                             </div>
 
                             <div className="row g-4 mb-4">
+                                {/* ROBOTICS SCANNER WIDGET */}
                                 <div className="col-12 col-lg-5">
                                     <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm h-100" style={{ background: 'linear-gradient(135deg, #f8fcf7 0%, #ffffff 100%)', border: '1px solid #e1eedd !important' }}>
                                         <div className="d-flex justify-content-between align-items-start mb-4">
                                             <div>
-                                                <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>Robotics Scanner</h6>
-                                                <small className="text-muted" style={{ fontSize: '0.7rem' }}>LPMPC-SCAN-01</small>
+                                                <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>Robotics Optical Scanner</h6>
+                                                <small className="text-muted" style={{ fontSize: '0.7rem' }}>Piña-QualiFi Conveyor Unit #1</small>
                                             </div>
                                             <span className="badge rounded-pill pulse px-2 py-2" style={{ backgroundColor: 'var(--lpmpc-light-yellow)', color: 'var(--lpmpc-green)', border: '1px solid var(--lpmpc-green)', fontSize: '0.6rem' }}>
-                                                ● LIVE ANALYSIS
+                                                ● LIVE GRADING ANALYSIS
                                             </span>
                                         </div>
 
@@ -899,12 +1001,12 @@ const AdminDashboard = () => {
                                                 <span className="material-symbols-outlined lpmpc-green opacity-25" style={{ fontSize: '2rem' }}>precision_manufacturing</span>
                                                 <div className="d-flex align-items-center justify-content-center mt-1">
                                                     <span className="material-symbols-outlined lpmpc-green me-2" style={{ fontSize: '1rem' }}>visibility</span>
-                                                    <p className="fw-bold lpmpc-green mb-0" style={{ fontSize: '0.75rem' }}>Surface Analysis Active</p>
+                                                    <p className="fw-bold lpmpc-green mb-0" style={{ fontSize: '0.75rem' }}>Visual Sensor Array Active</p>
                                                 </div>
                                             </div>
 
                                             <div className="w-100 px-1">
-                                                {[{ l: 'Color', v: '94%' }, { l: 'Purity', v: '88%' }, { l: 'Texture', v: '91%' }].map((m, i) => (
+                                                {[{ l: 'Color Spectrum', v: '94%' }, { l: 'Purity / Cleanliness', v: '88%' }, { l: 'Surface Texture', v: '91%' }].map((m, i) => (
                                                     <div className="mb-2" key={i}>
                                                         <div className="d-flex justify-content-between small mb-1 fw-bold lpmpc-green" style={{ fontSize: '0.7rem' }}>
                                                             <span>{m.l}</span><span>{m.v}</span>
@@ -916,22 +1018,13 @@ const AdminDashboard = () => {
                                                 ))}
                                             </div>
                                         </div>
-
-                                        <div className="row g-1 g-md-2 text-center">
-                                            {['Ivory', 'Ochre', 'Brown'].map((label, i) => (
-                                                <div key={i} className="col-4">
-                                                    <div className="py-1 rounded-2 border bg-light">
-                                                        <span className="fw-bold lpmpc-green" style={{ fontSize: '0.6rem' }}>{label}</span>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
                                     </div>
                                 </div>
 
+                                {/* RECENT SCANNED BATCHES TABLE */}
                                 <div className="col-12 col-lg-7">
                                     <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white h-100">
-                                        <h6 className="fw-bold text-uppercase mb-4 lpmpc-green" style={{ fontSize: '0.85rem' }}>Recent Scanned Batches</h6>
+                                        <h6 className="fw-bold text-uppercase mb-4 lpmpc-green" style={{ fontSize: '0.85rem' }}>Recent Scanned Fiber Batches</h6>
                                         <div className="table-responsive">
                                             <table className="table table-hover align-middle mb-0" style={{ minWidth: '400px' }}>
                                                 <thead>
@@ -939,46 +1032,39 @@ const AdminDashboard = () => {
                                                         <th className="pb-3">Batch ID</th>
                                                         <th className="pb-3 text-center">Grade</th>
                                                         <th className="pb-3 text-center">Score</th>
-                                                        <th className="pb-3 text-end">Action</th>
+                                                        <th className="pb-3 text-end">Logged Time</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody style={{ fontSize: '0.8rem' }}>
-                                                    {[
-                                                        { id: 'BAT-2026-001', grade: 'Grade A', score: '94/100' },
-                                                        { id: 'BAT-2026-002', grade: 'Grade B', score: '85/100' },
-                                                        { id: 'BAT-2026-003', grade: 'Grade A', score: '92/100' }
-                                                    ].map((batch, idx) => (
-                                                        <tr key={idx} className="border-bottom" style={{ cursor: 'pointer' }} onClick={() => setSelectedBatch(batch)}>
-                                                            <td className="py-3 fw-bold lpmpc-green">{batch.id}</td>
-                                                            <td className="text-center">
-                                                                <span className="badge rounded-pill bg-success bg-opacity-10 text-success" style={{ fontSize: '0.65rem' }}>{batch.grade}</span>
-                                                            </td>
-                                                            <td className="text-center fw-bold text-muted">{batch.score}</td>
-                                                            <td className="text-end">
-                                                                <button className="btn btn-sm text-success fw-bold p-0" style={{ fontSize: '0.75rem' }}> View Details</button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
+                                                    {isInventoryLoading ? (
+                                                        <tr><td colSpan="4" className="text-center py-3">Syncing scanner logs...</td></tr>
+                                                    ) : recentScannedBatches.length > 0 ? (
+                                                        recentScannedBatches.map((batch, idx) => (
+                                                            <tr key={idx} className="border-bottom" style={{ cursor: 'pointer' }} onClick={() => setSelectedBatch(batch)}>
+                                                                <td className="py-3 fw-bold lpmpc-green">{batch.id}</td>
+                                                                <td className="text-center">
+                                                                    <span className="badge rounded-pill bg-success bg-opacity-10 text-success fw-bold" style={{ fontSize: '0.65rem' }}>{batch.grade}</span>
+                                                                </td>
+                                                                <td className="text-center fw-bold text-muted">{batch.score}</td>
+                                                                <td className="text-end text-muted small">{batch.timestamp}</td>
+                                                            </tr>
+                                                        ))
+                                                    ) : (
+                                                        <tr><td colSpan="4" className="text-center py-3 text-muted">No recent conveyor scans logged.</td></tr>
+                                                    )}
                                                 </tbody>
                                             </table>
                                         </div>
-                                        <button className="btn mt-4 py-2 rounded-3 fw-bold text-uppercase w-100" style={{ backgroundColor: 'var(--lpmpc-light-yellow)', color: 'var(--lpmpc-green)', fontSize: '0.75rem', border: 'none' }}>
-                                            Generate Quality Audit Report
-                                        </button>
                                     </div>
                                 </div>
 
+                                {/* DYNAMIC FIBER STOCK LEDGER TABLE (PID-1 through PID-R) */}
                                 <div className="col-12">
-                                    <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white mt-4">
+                                    <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white mt-2">
                                         <div className="d-flex justify-content-between align-items-center mb-4">
                                             <div>
-                                                <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>Fiber Stock Ledger</h6>
-                                                <small className="text-muted" style={{ fontSize: '0.75rem' }}>Full inventory breakdown by fiber quality</small>
-                                            </div>
-                                            <div className="d-flex gap-2">
-                                                <button className="btn btn-outline-success btn-sm rounded-pill fw-bold px-3" style={{ fontSize: '0.7rem' }}>
-                                                    <span className="material-symbols-outlined align-middle me-1" style={{ fontSize: '14px' }}>filter_list</span> Filter
-                                                </button>
+                                                <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>Decorticated Fiber Stock Ledger</h6>
+                                                <small className="text-muted" style={{ fontSize: '0.75rem' }}>Live warehouse stock balances queried directly from database logs</small>
                                             </div>
                                         </div>
 
@@ -986,36 +1072,27 @@ const AdminDashboard = () => {
                                             <table className="table table-hover align-middle mb-0">
                                                 <thead className="bg-light">
                                                     <tr className="text-muted text-uppercase small border-bottom" style={{ fontSize: '0.7rem', letterSpacing: '0.5px' }}>
-                                                        <th className="py-3 ps-3">Fiber ID</th>
-                                                        <th className="py-3">Type / Quality</th>
-                                                        <th className="py-3 text-center">Available Stock</th>
-                                                        <th className="py-3 text-center">Avg. Score</th>
+                                                        <th className="py-3 ps-3">PNS Grade</th>
+                                                        <th className="py-3 text-center">Available Stock (kg)</th>
+                                                        <th className="py-3 text-center">Baseline Rate</th>
                                                         <th className="py-3 text-center">Status</th>
                                                         <th className="py-3 text-end pe-3">Action</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody style={{ fontSize: '0.85rem' }}>
-                                                    {[
-                                                        { id: 'FIB-LIN-001', type: 'Liniwan (Premium)', stock: '45.5 kg', score: '96/100', grade: 'Grade A', status: 'Optimal' },
-                                                        { id: 'FIB-BAS-002', type: 'Bastos (Coarse)', stock: '12.2 kg', score: '82/100', grade: 'Grade B', status: 'Low Stock' },
-                                                        { id: 'FIB-LIN-003', type: 'Liniwan (Standard)', stock: '28.0 kg', score: '89/100', grade: 'Grade A', status: 'Optimal' },
-                                                        { id: 'FIB-MIX-004', type: 'Mixed Grade', stock: '5.0 kg', score: '75/100', grade: 'Grade C', status: 'Critical' }
-                                                    ].map((fiber, idx) => (
+                                                    {isInventoryLoading ? (
+                                                        <tr><td colSpan="5" className="text-center py-4">Syncing live inventory database...</td></tr>
+                                                    ) : inventoryStock.map((fiber, idx) => (
                                                         <tr key={idx} className="border-bottom" style={{ cursor: 'pointer' }} onClick={() => setSelectedBatch(fiber)}>
                                                             <td className="py-3 ps-3 fw-bold lpmpc-green">{fiber.id}</td>
-                                                            <td className="py-3">
-                                                                <div className="fw-bold">{fiber.type}</div>
-                                                                <small className="text-muted">Queen Pineapple Fiber</small>
-                                                            </td>
-                                                            <td className="py-3 text-center fw-bold">{fiber.stock}</td>
-                                                            <td className="py-3 text-center fw-bold" style={{ fontFamily: "'Montserrat', sans-serif" }}>
-                                                                {fiber.score.split('/')[0]}<small className="text-muted fw-normal">%</small>
-                                                            </td>
+                                                            <td className="py-3 text-center fw-bold text-dark">{fiber.stockKg.toFixed(1)} kg</td>
+                                                            <td className="py-3 text-center fw-bold text-success">{fiber.price}</td>
                                                             <td className="py-3 text-center">
-                                                                <span className={`badge rounded-pill px-2 py-1 ${fiber.status === 'Optimal' ? 'bg-success bg-opacity-10 text-success' :
+                                                                <span className={`badge rounded-pill px-2 py-1 ${
+                                                                    fiber.status === 'Optimal' ? 'bg-success bg-opacity-10 text-success' :
                                                                     fiber.status === 'Low Stock' ? 'bg-warning bg-opacity-10 text-warning' :
-                                                                        'bg-danger bg-opacity-10 text-danger'
-                                                                    }`} style={{ fontSize: '0.65rem' }}>
+                                                                    'bg-danger bg-opacity-10 text-danger'
+                                                                }`} style={{ fontSize: '0.65rem' }}>
                                                                     {fiber.status}
                                                                 </span>
                                                             </td>
@@ -1033,12 +1110,13 @@ const AdminDashboard = () => {
                                 </div>
                             </div>
 
+                            {/* BATCH DETAIL MODAL */}
                             {selectedBatch && (
                                 <div className="modal-backdrop d-flex align-items-center justify-content-center p-2 p-md-3" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(70, 132, 50, 0.4)', zIndex: 2050, backdropFilter: 'blur(4px)' }}>
                                     <div className="card border-0 rounded-4 shadow-lg w-100" style={{ maxWidth: '500px', background: '#ffffff', maxHeight: '90vh', overflowY: 'auto' }}>
                                         <div className="card-header bg-transparent border-0 p-4 d-flex justify-content-between align-items-center sticky-top bg-white">
                                             <div>
-                                                <h5 className="fw-bold lpmpc-green m-0 text-uppercase" style={{ fontSize: '1rem' }}>Batch Analysis Report</h5>
+                                                <h5 className="fw-bold lpmpc-green m-0 text-uppercase" style={{ fontSize: '1rem' }}>PNS Grade Quality Report</h5>
                                                 <small className="text-muted">{selectedBatch.id}</small>
                                             </div>
                                             <button className="btn-close" onClick={() => setSelectedBatch(null)}></button>
@@ -1046,18 +1124,18 @@ const AdminDashboard = () => {
 
                                         <div className="card-body p-4 pt-0">
                                             <div className="text-center p-4 rounded-4 mb-4" style={{ backgroundColor: '#f8fcf7', border: '1px solid #e1eedd' }}>
-                                                <p className="text-muted small text-uppercase fw-bold mb-1">Final Quality Score</p>
-                                                <h1 className="display-4 fw-bold lpmpc-green m-0">{selectedBatch.score.split('/')[0]}<small style={{ fontSize: '1.5rem' }}>%</small></h1>
-                                                <span className="badge rounded-pill bg-success bg-opacity-10 text-success px-3 py-2 mt-2">{selectedBatch.grade}</span>
+                                                <p className="text-muted small text-uppercase fw-bold mb-1">Quality Assessment Score</p>
+                                                <h1 className="display-4 fw-bold lpmpc-green m-0">{selectedBatch.score ? selectedBatch.score.split('/')[0] : '92'}<small style={{ fontSize: '1.5rem' }}>%</small></h1>
+                                                <span className="badge rounded-pill bg-success bg-opacity-10 text-success px-3 py-2 mt-2">{selectedBatch.grade || selectedBatch.id}</span>
                                             </div>
 
-                                            <h6 className="fw-bold lpmpc-green mb-3 text-uppercase" style={{ fontSize: '0.75rem' }}>Detailed Metrics Breakdown</h6>
+                                            <h6 className="fw-bold lpmpc-green mb-3 text-uppercase" style={{ fontSize: '0.75rem' }}>PNS/BAFS 318:2021 Metrics</h6>
 
                                             <div className="vstack gap-3">
                                                 {[
-                                                    { label: 'Color / Luster', score: 94, desc: 'Light Ivory profile detected', icon: 'palette' },
-                                                    { label: 'Cleanliness (Purity)', score: 96, desc: 'Minimal residual plant skin', icon: 'cleaning_services' },
-                                                    { label: 'Texture / Softness', score: 91, desc: 'High degree of fiber pliability', icon: 'texture' }
+                                                    { label: 'Color / Luster', score: 94, desc: 'Light Ivory profile compliant', icon: 'palette' },
+                                                    { label: 'Cleanliness (Purity)', score: 88, desc: 'Minimal residual decortication debris', icon: 'cleaning_services' },
+                                                    { label: 'Texture / Tensile', score: 91, desc: 'High flexibility and bundle strength', icon: 'texture' }
                                                 ].map((metric, i) => (
                                                     <div key={i} className="p-3 rounded-3 border">
                                                         <div className="d-flex justify-content-between align-items-center mb-2">
@@ -1085,17 +1163,17 @@ const AdminDashboard = () => {
                         <div className={`admin-tab-content ${activeTab !== 'v-order' ? 'd-none' : ''}`}>
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
                                 <div>
-                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">ORDER</h2>
-                                    <p className="text-muted m-0 small">Production queue and fiber resource allocation</p>
+                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">ORDERS MANAGEMENT</h2>
+                                    <p className="text-muted m-0 small">Bulk decorticated fiber queue and leaf sourcing allocation</p>
                                 </div>
                                 <div className="date-display fw-bold text-uppercase small text-lpmpc">{dateStr}</div>
                             </div>
 
                             <div className="row g-3 mb-5">
                                 {[
-                                    { label: 'Pending Requests', count: isLoading ? '...' : String(pendingCount).padStart(2, '0'), color: '#468432' },
-                                    { label: 'In Production', count: isLoading ? '...' : String(productionCount).padStart(2, '0'), color: '#b59a00' },
-                                    { label: 'Orders Completed', count: isLoading ? '...' : String(completedCount).padStart(2, '0'), color: '#6c757d' }
+                                    { label: 'Pending / Sourcing Orders', count: isLoading ? '...' : String(pendingCount).padStart(2, '0'), color: '#468432' },
+                                    { label: 'Orders Processing', count: isLoading ? '...' : String(productionCount).padStart(2, '0'), color: '#b59a00' },
+                                    { label: 'Completed Deliveries', count: isLoading ? '...' : String(completedCount).padStart(2, '0'), color: '#6c757d' }
                                 ].map((w, i) => (
                                     <div className="col-12 col-md-4" key={i}>
                                         <div className="p-4 bg-white border border-light shadow-sm h-100 rounded-0 border-bottom border-3" style={{ borderBottomColor: w.color }}>
@@ -1106,135 +1184,76 @@ const AdminDashboard = () => {
                                 ))}
                             </div>
 
-                            {/* DYNAMIC UNIFIED PENDING ORDERS QUEUE */}
+                            {/* DYNAMIC PENDING ORDERS QUEUE */}
                             <div className="mb-4 mt-5 border-start border-4 border-warning ps-3">
-                                <h2 className="fw-bold m-0 text-uppercase" style={{ fontSize: '24px', letterSpacing: '1px', color: '#b59a00', fontFamily: "'Montserrat', sans-serif" }}>Pending Orders</h2>
-                                <p className="text-muted m-0 small">Incoming order requests requiring fiber assessment and layout validation</p>
+                                <h2 className="fw-bold m-0 text-uppercase" style={{ fontSize: '24px', letterSpacing: '1px', color: '#b59a00', fontFamily: "'Montserrat', sans-serif" }}>Pending Fiber Requests</h2>
+                                <p className="text-muted m-0 small">Incoming decorticated fiber orders requiring stock verification or farm sourcing</p>
                             </div>
 
                             <div className="row g-4 mb-5">
                                 {isLoading ? (
-                                    <div className="text-center text-muted small w-100 py-3">Syncing market portal database cards...</div>
+                                    <div className="text-center text-muted small w-100 py-3">Syncing customer orders...</div>
                                 ) : cardPendingOrders.length > 0 ? (
                                     cardPendingOrders.map((order) => {
                                         const primaryItem = order.order_items?.[0] || {};
-                                        const isSufficient = (primaryItem.stock_status || 'Sufficient') === 'Sufficient';
-
-                                        let sizeUnits = [];
-                                        if (Array.isArray(order.order_items)) {
-                                            sizeUnits = order.order_items;
-                                        } else if (primaryItem.measurements) {
-                                            sizeUnits = [primaryItem];
-                                        }
-
-                                        const aggregateQty = order.order_items?.reduce((acc, curr) => acc + (curr.measurements?.qty || 1), 0) || 1;
+                                        const isSourcing = order.order_status === 'Pending Farmer Sourcing';
 
                                         return (
                                             <div className="col-12" key={order.id}>
-                                                <div className="card border-0 shadow-sm rounded-0 bg-white border-top border-4" style={{ borderColor: isSufficient ? '#468432' : '#dc3545' }}>
-                                                    <div className="card-body p-0">
-                                                        <div className="row g-0">
+                                                <div className="card border-0 shadow-sm rounded-0 bg-white border-top border-4" style={{ borderColor: isSourcing ? '#b59a00' : '#468432' }}>
+                                                    <div className="card-body p-4">
+                                                        <div className="row align-items-center g-3">
 
-                                                            {/* DESIGN REFERENCE PREVIEW */}
-                                                            <div className="col-md-2 bg-light d-flex align-items-center justify-content-center border-end border-light p-3 text-center">
-                                                                <div>
-                                                                    <div className="text-muted fw-bold mb-2" style={{ fontSize: '9px' }}>DESIGN REF</div>
-                                                                    <img
-                                                                        src={order.design_url || 'https://via.placeholder.com/150'}
-                                                                        alt="Ref Layout"
-                                                                        className="img-fluid border border-white shadow-sm mb-2"
-                                                                        style={{ maxHeight: '120px', objectFit: 'cover' }}
-                                                                    />
-                                                                    <button className="btn btn-dark btn-sm rounded-0 w-100 fw-bold" style={{ fontSize: '9px' }}>VIEW FULL</button>
-                                                                </div>
-                                                            </div>
-
-                                                            {/* CLIENT PROFILE & DETAILED SIZING MATRIX */}
-                                                            <div className="col-md-7 p-4 border-end border-light">
-                                                                <div className="d-flex justify-content-between mb-2">
+                                                            {/* CUSTOMER DETAILS */}
+                                                            <div className="col-md-5">
+                                                                <div className="d-flex justify-content-between mb-1">
                                                                     <span className="text-muted fw-bold small">REF: {order.id.slice(0, 8).toUpperCase()}</span>
-                                                                    <span className="text-muted small">
-                                                                        Ordered at: <b>{new Date(order.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</b>
-                                                                    </span>
+                                                                    <span className="badge bg-light text-dark border">{order.order_status}</span>
                                                                 </div>
-
                                                                 <h5 className="fw-bold text-uppercase mb-1" style={{ fontSize: '18px', color: '#1e1e24' }}>{order.customer_name}</h5>
-                                                                <div className="fw-bold mb-3 small d-flex justify-content-between" style={{ color: '#468432' }}>
-                                                                    <span>{primaryItem.item_name || 'Market Item'}</span>
-                                                                    <span className="text-muted">Total Qty: <b className="text-dark">{aggregateQty} Unit(s)</b></span>
-                                                                </div>
+                                                                <p className="text-muted small mb-0">Contact: {order.contact_no || 'N/A'}</p>
+                                                                <p className="text-muted small mb-0">Address: {order.shipping_address || 'N/A'}</p>
+                                                            </div>
 
-                                                                <div className="table-responsive">
-                                                                    <table className="table table-sm table-bordered mb-0" style={{ fontSize: '12px' }}>
-                                                                        <thead className="bg-light text-center">
-                                                                            <tr style={{ fontSize: '10px' }} className="text-muted">
-                                                                                <th>UNIT / SET</th>
-                                                                                <th>QTY</th>
-                                                                                <th>BUST</th>
-                                                                                <th>WAIST</th>
-                                                                                <th>LENGTH</th>
-                                                                            </tr>
-                                                                        </thead>
-                                                                        <tbody className="text-center">
-                                                                            {sizeUnits.map((item, idx) => {
-                                                                                const spec = item.measurements || {};
-                                                                                return (
-                                                                                    <tr key={item.id || idx}>
-                                                                                        <td className="fw-bold bg-light">Unit #{idx + 1}</td>
-                                                                                        <td>{spec.qty || 1}</td>
-                                                                                        <td>{spec.bust ? `${spec.bust}"` : '—'}</td>
-                                                                                        <td>{spec.waist ? `${spec.waist}"` : '—'}</td>
-                                                                                        <td>{spec.length ? `${spec.length}"` : '—'}</td>
-                                                                                    </tr>
-                                                                                );
-                                                                            })}
-                                                                        </tbody>
-                                                                    </table>
+                                                            {/* BULK FIBER SPECS */}
+                                                            <div className="col-md-4">
+                                                                <div className="text-muted fw-bold text-uppercase mb-1" style={{ fontSize: '10px', letterSpacing: '0.5px' }}>Requested Fiber Specs</div>
+                                                                <div className="d-flex justify-content-between small mb-1">
+                                                                    <span className="text-muted">PNS Grade:</span>
+                                                                    <span className="fw-bold text-success">{primaryItem.fiber_type || 'PID-1'}</span>
+                                                                </div>
+                                                                <div className="d-flex justify-content-between small mb-1">
+                                                                    <span className="text-muted">Bulk Weight:</span>
+                                                                    <span className="fw-bold">{primaryItem.fiber_weight ? `${primaryItem.fiber_weight} kg` : '1.0 kg'}</span>
+                                                                </div>
+                                                                <div className="d-flex justify-content-between small">
+                                                                    <span className="text-muted">Rate:</span>
+                                                                    <span className="fw-bold">₱650.00 / kg</span>
                                                                 </div>
                                                             </div>
 
-                                                            {/* RESOURCE SPECIFICATIONS & BILLING METRICS */}
-                                                            <div className="col-md-3 p-4 bg-white d-flex flex-column justify-content-between">
-                                                                <div>
-                                                                    <div className="text-muted fw-bold text-uppercase mb-2" style={{ fontSize: '10px', letterSpacing: '0.5px' }}>Production Specs</div>
-                                                                    <div className="d-flex justify-content-between small mb-1">
-                                                                        <span className="text-muted">Fiber Class:</span>
-                                                                        <span className="fw-bold">{primaryItem.fiber_type || 'PID-Prime'}</span>
-                                                                    </div>
-                                                                    <div className="d-flex justify-content-between small mb-2">
-                                                                        <span className="text-muted">Required Weight:</span>
-                                                                        <span className="fw-bold">{primaryItem.fiber_weight ? `${primaryItem.fiber_weight} kg` : '1.5 kg'}</span>
-                                                                    </div>
+                                                            {/* PRICING & ACTIONS */}
+                                                            <div className="col-md-3 text-md-end border-start ps-md-4">
+                                                                <span className="text-muted fw-bold d-block" style={{ fontSize: '10px' }}>TOTAL PRICE</span>
+                                                                <h3 className="fw-bold mb-3" style={{ fontSize: '22px', color: '#468432' }}>
+                                                                    ₱{Number(order.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                </h3>
 
-                                                                    <div className="fw-bold text-end mt-2 small" style={{ color: isSufficient ? '#468432' : '#dc3545' }}>
-                                                                        ● {(primaryItem.stock_status || 'Sufficient').toUpperCase()}
-                                                                    </div>
-                                                                </div>
-
-                                                                <div>
-                                                                    <div className="mb-3 d-flex justify-content-between align-items-end border-top pt-2">
-                                                                        <span className="text-muted fw-bold" style={{ fontSize: '10px' }}>TOTAL PRICE</span>
-                                                                        <h3 className="fw-bold m-0" style={{ fontSize: '22px', color: '#468432' }}>
-                                                                            ₱{Number(order.total_amount).toLocaleString()}
-                                                                        </h3>
-                                                                    </div>
-
-                                                                    <div className="d-grid gap-2">
-                                                                        <button
-                                                                            onClick={() => handleApproveOrder(order.id)}
-                                                                            className="btn btn-success btn-sm rounded-0 fw-bold py-2 text-uppercase"
-                                                                            style={{ backgroundColor: '#468432', border: 'none', fontSize: '11px', letterSpacing: '0.5px' }}
-                                                                        >
-                                                                            Approve Order Set
-                                                                        </button>
-                                                                        <button
-                                                                            onClick={() => handleRejectOrder(order.id)}
-                                                                            className="btn btn-outline-secondary btn-sm rounded-0 fw-bold py-2 text-uppercase"
-                                                                            style={{ fontSize: '11px', letterSpacing: '0.5px' }}
-                                                                        >
-                                                                            Reject Request
-                                                                        </button>
-                                                                    </div>
+                                                                <div className="d-grid gap-2">
+                                                                    <button
+                                                                        onClick={() => handleApproveOrder(order)}
+                                                                        className="btn btn-success btn-sm rounded-0 fw-bold py-2 text-uppercase"
+                                                                        style={{ backgroundColor: '#468432', border: 'none', fontSize: '11px' }}
+                                                                    >
+                                                                        Verify & Approve Order
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleRejectOrder(order.id)}
+                                                                        className="btn btn-outline-danger btn-sm rounded-0 fw-bold py-2 text-uppercase"
+                                                                        style={{ fontSize: '11px' }}
+                                                                    >
+                                                                        Reject Order
+                                                                    </button>
                                                                 </div>
                                                             </div>
 
@@ -1254,19 +1273,20 @@ const AdminDashboard = () => {
                             {/* ACTIVE ORDER QUEUE GRID */}
                             <div className="card border-0 shadow-sm rounded-0 bg-white">
                                 <div className="card-header bg-white py-3 border-bottom border-light">
-                                    <h6 className="m-0 fw-bold lpmpc-green text-uppercase" style={{ letterSpacing: '0.5px' }}>Active Order Queue</h6>
+                                    <h6 className="m-0 fw-bold lpmpc-green text-uppercase" style={{ letterSpacing: '0.5px' }}>Active Fiber Order Queue</h6>
                                 </div>
                                 <div className="card-body p-0">
                                     {isLoading ? (
-                                        <div className="text-center p-5 text-muted small">Loading production records ledger...</div>
+                                        <div className="text-center p-5 text-muted small">Loading order records ledger...</div>
                                     ) : (
                                         <div className="table-responsive">
                                             <table className="table table-hover align-middle mb-0" style={{ fontSize: '14px' }}>
                                                 <thead className="bg-light text-uppercase text-muted" style={{ fontSize: '12px', fontWeight: '700' }}>
                                                     <tr>
                                                         <th className="ps-4 py-3">Order ID</th>
-                                                        <th className="py-3">Customer / Item</th>
-                                                        <th className="py-3">Fiber Specs</th>
+                                                        <th className="py-3">Customer Name</th>
+                                                        <th className="py-3">PNS Fiber Grade</th>
+                                                        <th className="py-3">Weight (kg)</th>
                                                         <th className="py-3">Total Amount</th>
                                                         <th className="py-3">Real-Time Status</th>
                                                         <th className="text-center pe-4 py-3">Actions</th>
@@ -1279,16 +1299,18 @@ const AdminDashboard = () => {
                                                             return (
                                                                 <tr key={order.id} className="border-bottom">
                                                                     <td className="ps-4 fw-bold text-dark py-3">
-                                                                        LPMPC-2026-{order.id.slice(0, 3).toUpperCase()}
+                                                                        REF-{order.id.slice(0, 5).toUpperCase()}
                                                                     </td>
                                                                     <td className="py-3">
                                                                         <div className="fw-bold text-uppercase text-dark" style={{ fontSize: '14px' }}>{order.customer_name}</div>
-                                                                        <div className="text-muted small" style={{ fontSize: '13px' }}>{itemRow.item_name || "Custom Item"}</div>
                                                                     </td>
                                                                     <td className="py-3">
-                                                                        <span className="badge bg-light text-secondary border rounded-pill px-3 py-2 fw-normal" style={{ fontSize: '12px' }}>
-                                                                            {itemRow.fiber_type || 'PID-1'} ({itemRow.fiber_weight || '0.0'}kg)
+                                                                        <span className="badge bg-light text-success border rounded-pill px-3 py-2 fw-bold" style={{ fontSize: '12px' }}>
+                                                                            {itemRow.fiber_type || 'PID-1'}
                                                                         </span>
+                                                                    </td>
+                                                                    <td className="py-3 fw-bold">
+                                                                        {itemRow.fiber_weight || '1.0'} kg
                                                                     </td>
                                                                     <td className="fw-bold text-success py-3" style={{ color: '#468432', fontSize: '14px' }}>
                                                                         ₱{Number(order.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1301,8 +1323,8 @@ const AdminDashboard = () => {
                                                                             style={{ fontSize: '13px', width: '160px', color: '#495057' }}
                                                                         >
                                                                             <option value="Confirmed">Confirmed</option>
-                                                                            <option value="Weaving">Weaving</option>
-                                                                            <option value="Shipping">Shipping</option>
+                                                                            <option value="Processing">Processing</option>
+                                                                            <option value="In Transit">In Transit</option>
                                                                             <option value="Received">Received</option>
                                                                         </select>
                                                                     </td>
@@ -1340,7 +1362,7 @@ const AdminDashboard = () => {
                                                         })
                                                     ) : (
                                                         <tr>
-                                                            <td colSpan="6" className="text-center py-5 text-muted small">
+                                                            <td colSpan="7" className="text-center py-5 text-muted small">
                                                                 No active approved queue list inside the tracking data ledger.
                                                             </td>
                                                         </tr>
@@ -1358,7 +1380,7 @@ const AdminDashboard = () => {
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
                                 <div>
                                     <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">SALES RECORD</h2>
-                                    <p className="text-muted m-0 small">Transaction history and revenue tracking.</p>
+                                    <p className="text-muted m-0 small">Bulk fiber transaction history and revenue tracking.</p>
                                 </div>
                                 <div className="date-display fw-bold text-uppercase small text-lpmpc">{dateStr}</div>
                             </div>
@@ -1403,20 +1425,11 @@ const AdminDashboard = () => {
                                         Unpaid / Pending
                                     </button>
                                 </div>
-
-                                <div className="d-flex gap-2">
-                                    <select className="form-select form-select-sm rounded-0 shadow-none border-secondary-subtle" style={{ width: '130px', fontSize: '11px' }}>
-                                        <option>MAY 2026</option>
-                                    </select>
-                                    <button className="btn btn-sm btn-outline-success rounded-0 text-uppercase fw-bold" style={{ fontSize: '11px', borderColor: '#468432', color: '#468432' }}>
-                                        Export
-                                    </button>
-                                </div>
                             </div>
 
                             <div className="bg-white border shadow-sm rounded-0 overflow-hidden">
                                 {salesView === 'paid' ? (
-                                    <div className="animate__animated animate__fadeIn">
+                                    <div>
                                         <div className="table-responsive">
                                             <table className="table table-hover align-middle mb-0" style={{ fontSize: '14px' }}>
                                                 <thead className="bg-light text-muted" style={{ fontSize: '11px' }}>
@@ -1435,7 +1448,7 @@ const AdminDashboard = () => {
                                                     ) : paidOrders.length > 0 ? (
                                                         paidOrders.map((sale) => (
                                                             <tr key={sale.id} className="border-bottom">
-                                                                <td className="fw-bold px-4 py-3">LPMPC-2026-{sale.id.slice(0, 3).toUpperCase()}</td>
+                                                                <td className="fw-bold px-4 py-3">REF-{sale.id.slice(0, 5).toUpperCase()}</td>
                                                                 <td className="text-muted">{new Date(sale.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
                                                                 <td>{sale.customer_name}</td>
                                                                 <td className="text-end fw-bold px-4 py-3 text-success" style={{ color: '#468432' }}>₱{Number(sale.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -1449,13 +1462,9 @@ const AdminDashboard = () => {
                                                 </tbody>
                                             </table>
                                         </div>
-                                        <div className="p-3 text-end bg-light border-top">
-                                            <small className="text-muted text-uppercase fw-bold me-2" style={{ fontSize: '10px' }}>Subtotal (Paid):</small>
-                                            <span className="fw-bold fs-5" style={{ color: '#468432' }}>₱{totalPaidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                        </div>
                                     </div>
                                 ) : (
-                                    <div className="animate__animated animate__fadeIn">
+                                    <div>
                                         <div className="table-responsive">
                                             <table className="table table-hover align-middle mb-0" style={{ fontSize: '14px' }}>
                                                 <thead className="bg-light text-muted" style={{ fontSize: '11px' }}>
@@ -1475,7 +1484,7 @@ const AdminDashboard = () => {
                                                     ) : unpaidOrders.length > 0 ? (
                                                         unpaidOrders.map((sale) => (
                                                             <tr key={sale.id} className="border-bottom">
-                                                                <td className="fw-bold px-4 py-3">LPMPC-2026-{sale.id.slice(0, 3).toUpperCase()}</td>
+                                                                <td className="fw-bold px-4 py-3">REF-{sale.id.slice(0, 5).toUpperCase()}</td>
                                                                 <td className="text-muted">{new Date(sale.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
                                                                 <td>{sale.customer_name}</td>
                                                                 <td>
@@ -1493,10 +1502,6 @@ const AdminDashboard = () => {
                                                     )}
                                                 </tbody>
                                             </table>
-                                        </div>
-                                        <div className="p-3 text-end bg-light border-top">
-                                            <small className="text-muted text-uppercase fw-bold me-2" style={{ fontSize: '10px' }}>Total Unpaid:</small>
-                                            <span className="fw-bold text-danger fs-5">₱{totalUnpaidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                     </div>
                                 )}
@@ -1545,18 +1550,18 @@ const AdminDashboard = () => {
                  }
             `}} />
 
-            {/* REAL-TIME PRODUCTION ORDER DETAILS MODAL (POPUP) */}
+            {/* REAL-TIME DECORTICATED FIBER ORDER DETAILS MODAL */}
             <div className="modal fade" id="orderDetailModal" tabIndex="-1" aria-hidden="true" data-bs-backdrop="static">
                 <div className="modal-dialog modal-lg modal-dialog-centered">
                     <div className="modal-content rounded-0 border-0 shadow">
                         <div className="modal-header bg-lpmpc-green text-white rounded-0 py-3 px-4 d-flex justify-content-between align-items-center">
                             <div>
-                                <h5 className="modal-title fw-bold text-uppercase m-0" style={{ fontSize: '16px', letterSpacing: '0.5px', fontFamily: "'Montserrat', sans-serif" }}>
-                                    Production Specifications Ledger
+                                <h5 className="modal-title fw-bold text-uppercase m-0" style={{ fontSize: '16px', letterSpacing: '0.5px' }}>
+                                    Decorticated Fiber Order Specifications
                                 </h5>
                                 {selectedOrder && (
                                     <small className="text-white-50 small">
-                                        Tracking ID: LPMPC-2026-{selectedOrder.id.slice(0, 3).toUpperCase()}
+                                        Tracking ID: REF-{selectedOrder.id.slice(0, 5).toUpperCase()}
                                     </small>
                                 )}
                             </div>
@@ -1567,115 +1572,52 @@ const AdminDashboard = () => {
                             {selectedOrder ? (
                                 <div className="container-fluid p-0">
                                     <div className="row g-4">
-                                        <div className="col-md-4 text-center">
-                                            <div className="card border-0 rounded-0 shadow-sm p-3 bg-white h-100 d-flex flex-column justify-content-between">
-                                                <div>
-                                                    <span className="text-muted fw-bold d-block mb-2 text-uppercase" style={{ fontSize: '10px', letterSpacing: '0.5px' }}>
-                                                        Design Layout BluePrint
-                                                    </span>
-                                                    <div className="border border-light p-2 bg-light d-flex align-items-center justify-content-center" style={{ minHeight: '160px' }}>
-                                                        <img
-                                                            src={selectedOrder.design_url || 'https://via.placeholder.com/200x250?text=No+Design+Uploaded'}
-                                                            alt="Tailoring Reference"
-                                                            className="img-fluid border border-white shadow-sm"
-                                                            style={{ maxHeight: '200px', objectFit: 'contain' }}
-                                                        />
-                                                    </div>
-                                                </div>
-                                                {selectedOrder.design_url && (
-                                                    <a href={selectedOrder.design_url} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline-dark rounded-0 fw-bold w-100 mt-3" style={{ fontSize: '11px' }}>
-                                                        VIEW FULL RES IMAGE
-                                                    </a>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        <div className="col-md-8">
-                                            <div className="d-flex flex-column gap-3">
-                                                <div className="card border-0 rounded-0 shadow-sm p-3 bg-white">
-                                                    <h6 className="fw-bold text-uppercase mb-3 pb-2 border-bottom text-dark" style={{ fontSize: '13px' }}>
-                                                        Customer Logistics & Contact Profile
-                                                    </h6>
-                                                    <div className="row g-2" style={{ fontSize: '13px' }}>
-                                                        <div className="col-4 text-muted">Customer Name:</div>
-                                                        <div className="col-8 fw-bold text-uppercase text-dark">{selectedOrder.customer_name}</div>
-
-                                                        <div className="col-4 text-muted">Contact Number:</div>
-                                                        <div className="col-8 fw-medium">{selectedOrder.contact_no || 'No Contact Provided'}</div>
-
-                                                        <div className="col-4 text-muted">Shipping Address:</div>
-                                                        <div className="col-8 text-secondary fw-normal">{selectedOrder.shipping_address || 'No Address Logged'}</div>
-
-                                                        <div className="col-4 text-muted">Delivery Method:</div>
-                                                        <div className="col-8"><span className="badge bg-light text-dark border fw-semibold">{selectedOrder.delivery_method || 'Standard'}</span></div>
-                                                    </div>
-                                                </div>
-
-                                                <div className="card border-0 rounded-0 shadow-sm p-3 bg-white">
-                                                    <h6 className="fw-bold text-uppercase mb-2 pb-2 border-bottom text-dark" style={{ fontSize: '13px' }}>
-                                                        Fiber Evaluation Specifications
-                                                    </h6>
-                                                    <div className="d-flex justify-content-between align-items-center mb-1" style={{ fontSize: '13px' }}>
-                                                        <span className="text-muted">Target Core Item Type:</span>
-                                                        <span className="fw-bold text-uppercase text-dark">{selectedOrder.order_items?.[0]?.item_name || 'Custom Marketplace Asset'}</span>
-                                                    </div>
-                                                    <div className="d-flex justify-content-between align-items-center" style={{ fontSize: '13px' }}>
-                                                        <span className="text-muted">Fiber Class / Raw Weight Allocation:</span>
-                                                        <span className="fw-bold text-success">
-                                                            {selectedOrder.order_items?.[0]?.fiber_type || 'PID-Prime'} ({selectedOrder.order_items?.[0]?.fiber_weight || '0.0'} kg)
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-
                                         <div className="col-12">
+                                            <div className="card border-0 rounded-0 shadow-sm p-3 bg-white mb-3">
+                                                <h6 className="fw-bold text-uppercase mb-3 pb-2 border-bottom text-dark" style={{ fontSize: '13px' }}>
+                                                    Client & Delivery Profile
+                                                </h6>
+                                                <div className="row g-2" style={{ fontSize: '13px' }}>
+                                                    <div className="col-4 text-muted">Customer Name:</div>
+                                                    <div className="col-8 fw-bold text-uppercase text-dark">{selectedOrder.customer_name}</div>
+
+                                                    <div className="col-4 text-muted">Contact Number:</div>
+                                                    <div className="col-8 fw-medium">{selectedOrder.contact_no || 'No Contact Provided'}</div>
+
+                                                    <div className="col-4 text-muted">Shipping Address:</div>
+                                                    <div className="col-8 text-secondary fw-normal">{selectedOrder.shipping_address || 'No Address Logged'}</div>
+
+                                                    <div className="col-4 text-muted">Delivery Method:</div>
+                                                    <div className="col-8"><span className="badge bg-light text-dark border fw-semibold">{selectedOrder.delivery_method || 'Standard'}</span></div>
+                                                </div>
+                                            </div>
+
                                             <div className="card border-0 rounded-0 shadow-sm p-3 bg-white">
                                                 <h6 className="fw-bold text-uppercase mb-3 pb-2 border-bottom text-dark" style={{ fontSize: '13px' }}>
-                                                    Tailoring Dimensional Sizing Matrix
+                                                    Order Items Ledger (Bulk Fiber)
                                                 </h6>
                                                 <div className="table-responsive">
-                                                    <table className="table table-sm table-bordered mb-0 align-middle" style={{ fontSize: '12px' }}>
-                                                        <thead className="bg-light text-center text-muted text-uppercase" style={{ fontSize: '10px' }}>
+                                                    <table className="table table-bordered align-middle">
+                                                        <thead className="table-light">
                                                             <tr>
-                                                                <th style={{ width: '15%' }}>Unit Set</th>
-                                                                <th>Quantity Order</th>
-                                                                <th>Bust Dimension</th>
-                                                                <th>Waist Dimension</th>
-                                                                <th>Length Dimension</th>
+                                                                <th>PNS Fiber Grade</th>
+                                                                <th className="text-center">Ordered Weight (kg)</th>
+                                                                <th className="text-center">Unit Price Rate</th>
+                                                                <th className="text-end">Subtotal Price</th>
                                                             </tr>
                                                         </thead>
-                                                        <tbody className="text-center">
-                                                            {selectedOrder.order_items && selectedOrder.order_items.length > 0 ? (
-                                                                selectedOrder.order_items.map((item, idx) => {
-                                                                    const specs = item.measurements || {};
-                                                                    return (
-                                                                        <tr key={item.id || idx}>
-                                                                            <td className="fw-bold bg-light py-2">Unit #{idx + 1}</td>
-                                                                            <td>{specs.qty || 1}</td>
-                                                                            <td className="fw-semibold text-dark">{specs.bust ? `${specs.bust}"` : '—'}</td>
-                                                                            <td className="fw-semibold text-dark">{specs.waist ? `${specs.waist}"` : '—'}</td>
-                                                                            <td className="fw-semibold text-dark">{specs.length ? `${specs.length}"` : '—'}</td>
-                                                                        </tr>
-                                                                    );
-                                                                })
-                                                            ) : (
-                                                                <tr>
-                                                                    <td colSpan="5" className="text-center py-2 text-muted italic">
-                                                                        No specific dimension attributes mapped to this item configuration.
-                                                                    </td>
+                                                        <tbody>
+                                                            {selectedOrder.order_items?.map((item, idx) => (
+                                                                <tr key={idx}>
+                                                                    <td className="fw-bold text-success">{item.item_name}</td>
+                                                                    <td className="text-center">{item.fiber_weight} kg</td>
+                                                                    <td className="text-center">₱{item.unit_price} / kg</td>
+                                                                    <td className="text-end fw-bold">₱{(item.fiber_weight * item.unit_price).toLocaleString()}</td>
                                                                 </tr>
-                                                            )}
+                                                            ))}
                                                         </tbody>
                                                     </table>
                                                 </div>
-
-                                                {selectedOrder.special_notes && (
-                                                    <div className="mt-3 bg-light p-2 border border-light-subtle" style={{ fontSize: '12px' }}>
-                                                        <b className="text-uppercase text-muted d-block mb-1" style={{ fontSize: '10px' }}>Special Instructions / Client Notes:</b>
-                                                        <span className="text-dark fw-medium">"{selectedOrder.special_notes}"</span>
-                                                    </div>
-                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -1690,6 +1632,7 @@ const AdminDashboard = () => {
                 </div>
             </div>
 
+            {/* ADD FARMER MODAL */}
             <div className="modal fade" id="addFarmerModal" tabIndex="-1">
                 <div className="modal-dialog">
                     <div className="modal-content rounded-0">
@@ -1715,14 +1658,14 @@ const AdminDashboard = () => {
                                         name="address"
                                         className="form-control rounded-0"
                                         onKeyDown={handleAddressKeyDown}
-                                        placeholder="Type address & press ENTER to search, or drag map marker..."
+                                        placeholder="Type address & press ENTER..."
                                         required
                                     />
 
                                     <input type="hidden" id="farmer-lat" name="latitude" />
                                     <input type="hidden" id="farmer-lng" name="longitude" />
 
-                                    <div id="farmer-map" style={{ height: '300px', width: '100%', marginTop: '10px' }}></div>
+                                    <div id="farmer-map" style={{ height: '250px', width: '100%', marginTop: '10px' }}></div>
                                 </div>
                                 <div className="mb-2">
                                     <label className="small fw-bold text-muted">FARM NAME</label>
@@ -1744,14 +1687,13 @@ const AdminDashboard = () => {
                                     <input type="password" name="password" className="form-control rounded-0" required />
                                 </div>
                                 <button type="submit" className="btn w-100 rounded-0 text-white fw-bold" style={{ backgroundColor: '#468432' }}>
-                                    CREATE ACCOUNT
+                                    CREATE FARMER ACCOUNT
                                 </button>
                             </form>
                         </div>
                     </div>
                 </div>
             </div>
-
 
         </div>
     );
