@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Timeline } from 'vis-timeline/standalone';
 import { DataSet } from 'vis-data';
 import { createClient } from '@supabase/supabase-js';
+import { useNavigate } from 'react-router-dom';
 import 'vis-timeline/styles/vis-timeline-graph2d.css';
 
 const supabaseUrl = 'https://bqblzvgwkvdkanobntgn.supabase.co';
@@ -10,22 +11,11 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const PINEAPPLE_BASE_TEMP = 15;
 
-// Historical monthly mean temperatures extracted from WorldClim v2.1
-// Climatology baseline (1970–2000) for Camarines Norte geographic grid.
 const HISTORICAL_MONTHLY_TEMPS = {
     0: 26.5, 1: 26.8, 2: 27.4, 3: 28.5, 4: 28.9, 5: 28.4,
     6: 28.0, 7: 28.1, 8: 28.0, 9: 27.6, 10: 27.1, 11: 26.7
 };
 
-/*
-====================================================================
-WEATHER ADJUSTMENT DECISION RULES
-These thresholds function as decision-support heuristics.
-They are intentionally conservative because no locally validated
-thermal-time (GDD) equation currently exists for the Queen pineapple
-variety under Camarines Norte climatic conditions.
-====================================================================
-*/
 const WEATHER_RULES = {
     EXTREME_COLD_DELAY: 7,
     MODERATE_COLD_DELAY: 4,
@@ -50,8 +40,10 @@ const parseDateOnlyUTC = (dateString) => {
 };
 
 const FarmerDashboard = () => {
+    const navigate = useNavigate();
     const [dateStr, setDateStr] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState('ALL');
     const [userId, setUserId] = useState(null);
 
     const [farmerProfile, setFarmerProfile] = useState({
@@ -76,15 +68,46 @@ const FarmerDashboard = () => {
         });
         setDateStr(now);
 
-        const fetchSession = async () => {
+        const fetchSessionAndVerify = async () => {
             const { data: { session } } = await supabase.auth.getSession();
-            if (session?.user) {
-                setUserId(session.user.id);
-                fetchFarmerData(session.user.id);
+            if (!session?.user) {
+                navigate('/', { replace: true });
+                return;
             }
+
+            const { data: userRow } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', session.user.id)
+                .maybeSingle();
+
+            if (!userRow || userRow.role !== 'farmer') {
+                alert("Access Denied: Restricted for Partner Farmers only.");
+                await supabase.auth.signOut();
+                navigate('/', { replace: true });
+                return;
+            }
+
+            setUserId(session.user.id);
+            fetchFarmerData(session.user.id);
         };
-        fetchSession();
-    }, []);
+
+        fetchSessionAndVerify();
+    }, [navigate]);
+
+    const handleFarmerSignOut = async () => {
+        if (window.confirm("Are you sure you want to log out of your Farmer Portal?")) {
+            try {
+                await supabase.auth.signOut();
+                localStorage.clear();
+                sessionStorage.clear();
+                navigate('/', { replace: true });
+            } catch (error) {
+                console.error("Logout Error:", error.message);
+                alert("Failed to log out cleanly.");
+            }
+        }
+    };
 
     const fetchFarmerData = async (uid) => {
         try {
@@ -128,7 +151,6 @@ const FarmerDashboard = () => {
                         const pastPhasesSealedDelay = Number(farm.current_delay) || 0;
                         let activePhaseDelay = 0;
 
-                        // FIXED TYPO OVERLAP BUG: Operational ranges are now strictly segregated
                         if (farm.progress >= 0 && farm.progress < 20 && daysElapsed > 30) {
                             activePhaseDelay = daysElapsed - 30;
                         } else if (farm.progress >= 20 && farm.progress < 40 && daysElapsed > 90) {
@@ -207,7 +229,6 @@ const FarmerDashboard = () => {
                 }
             };
 
-            // Request historical data up to 6 days ago (accounting for ERA5 dataset latency)
             if (startDate <= archiveEndIso) {
                 try {
                     const archiveUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lng)}&start_date=${startDate}&end_date=${archiveEndIso}&daily=temperature_2m_max,temperature_2m_min&timezone=Asia%2FManila`;
@@ -221,11 +242,9 @@ const FarmerDashboard = () => {
                     console.error('Archive weather request failed:', err);
                 }
             } else {
-                // Archive layer intentionally skipped because planting is within the recent period (< 6 days)
                 archiveSucceeded = true;
             }
 
-            // Request short-term weather outlook (includes 5 past days buffer + 7 days forecast)
             try {
                 const forecastUrl = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lng)}&daily=temperature_2m_max,temperature_2m_min&past_days=5&forecast_days=7&timezone=Asia%2FManila`;
                 const forecastRes = await fetch(forecastUrl);
@@ -257,23 +276,31 @@ const FarmerDashboard = () => {
         }
     };
 
-    const handleStatusUpdate = async (id, newStatus) => {
-        const { error } = await supabase.from('farm').update({ status_name: newStatus }).eq('id', id);
-        if (error) alert("Error updating status: " + error.message);
-        else setFarms(farms.map(f => f.id === id ? { ...f, status_name: newStatus } : f));
-    };
-
-    const generateBatchId = (pDate) => {
+    const generateBatchId = async (pDate) => {
         const d = new Date(pDate);
         const year = d.getFullYear().toString().slice(-2);
         const month = (d.getMonth() + 1).toString().padStart(2, '0');
-        const count = farms.filter(f => f.batch_id?.startsWith(`${year}-${month}`)).length + 1;
-        return `${year}-${month}-${count.toString().padStart(4, '0')}`;
+        const prefix = `${year}-${month}`;
+
+        const { data: allFarms, error } = await supabase
+            .from('farm')
+            .select('batch_id')
+            .like('batch_id', `${prefix}-%`);
+
+        if (error) {
+            console.error("Error generating batch ID:", error);
+            return `${prefix}-0001`;
+        }
+
+        const nextCount = (allFarms ? allFarms.length : 0) + 1;
+        return `${prefix}-${nextCount.toString().padStart(4, '0')}`;
     };
 
     const handleSaveBatch = async (e) => {
         e.preventDefault();
         if (!plantingDate || !userId) return;
+
+        const generatedBatchId = await generateBatchId(plantingDate);
 
         const startDateObj = new Date(plantingDate);
         const endDateObj = new Date(startDateObj);
@@ -283,9 +310,16 @@ const FarmerDashboard = () => {
         const endIso = endDateObj.toISOString().split('T')[0];
 
         const newBatchPayload = {
-            user_id: userId, batch_id: generateBatchId(plantingDate), farm_name: farmerProfile.fixedLocation,
-            owner_name: farmerProfile.name, contact_number: farmerProfile.contactNumber, start_date: startIso,
-            end_date: endIso, status_name: 'Vegetative', progress: 0, current_delay: 0
+            user_id: userId,
+            batch_id: generatedBatchId,
+            farm_name: farmerProfile.fixedLocation,
+            owner_name: farmerProfile.name,
+            contact_number: farmerProfile.contactNumber,
+            start_date: startIso,
+            end_date: endIso,
+            status_name: 'Vegetative',
+            progress: 0,
+            current_delay: 0
         };
 
         const { data, error } = await supabase.from('farm').insert([newBatchPayload]).select();
@@ -293,11 +327,14 @@ const FarmerDashboard = () => {
         else if (data) { fetchFarmerData(userId); setPlantingDate(''); setEstimatedHarvest(''); }
     };
 
-    // React single-source filter implementation layer
     const filteredFarms = farms.filter(farm => {
         const batchMatch = (farm.batch_id || '').toLowerCase().includes(searchQuery.toLowerCase());
         const statusMatch = (farm.status_name || '').toLowerCase().includes(searchQuery.toLowerCase());
-        return batchMatch || statusMatch;
+
+        const matchesSearch = batchMatch || statusMatch;
+        const matchesDropdown = statusFilter === 'ALL' || (farm.status_name || '').toUpperCase() === statusFilter;
+
+        return matchesSearch && matchesDropdown;
     });
 
     useEffect(() => {
@@ -310,10 +347,9 @@ const FarmerDashboard = () => {
         return () => { if (timelineRef.current) { timelineRef.current.destroy(); timelineRef.current = null; } };
     }, []);
 
-    // SYNCHRONIZED RE-RENDER TRIGGER: Redraws layout immediately when filters mutate
     useEffect(() => {
         updateTimelineEngine(filteredFarms);
-    }, [farms, searchQuery]);
+    }, [farms, searchQuery, statusFilter]);
 
     const updateTimelineEngine = (farmData) => {
         if (!groups.current || !items.current) return;
@@ -327,7 +363,8 @@ const FarmerDashboard = () => {
 
             const s = (farm.status_name || 'vegetative').toLowerCase();
             let phaseClass = 'bar-veg';
-            if (s.includes('harvest')) phaseClass = 'bar-harvest';
+            if (s.includes('harvested')) phaseClass = 'bar-harvested';
+            else if (s.includes('harvest')) phaseClass = 'bar-harvest';
             else if (s.includes('matur')) phaseClass = 'bar-maturation';
             else if (s.includes('flow')) phaseClass = 'bar-flow';
 
@@ -386,12 +423,12 @@ const FarmerDashboard = () => {
         const confirmAction = window.confirm(`Are you sure you want to log '${activity}'? This action cannot be undone.`);
         if (!confirmAction) return;
 
-        const activityOrder = ['1st Fertilization', '2nd Fertilization', 'Flower Forcing', 'Fruit Shading', 'Harvest'];
+        const activityOrder = ['1st Fertilization', '2nd Fertilization', 'Flower Forcing', 'Fruit Shading', 'Harvest', 'Harvested'];
         const currentIndex = activityOrder.indexOf(activity);
 
         if (currentIndex > 0) {
             const previousActivity = activityOrder[currentIndex - 1];
-            if (farm.progress < (currentIndex * 20)) {
+            if (farm.progress < (currentIndex * 16.6) && activity !== 'Harvested') {
                 alert(`Please complete '${previousActivity}' first!`);
                 return;
             }
@@ -406,40 +443,67 @@ const FarmerDashboard = () => {
 
         let newStatus = farm.status_name;
         let newProgress = farm.progress || 0;
+        let updatePayload = {};
 
         switch (activity) {
-            case '1st Fertilization': newStatus = 'Vegetative'; newProgress = 20; break;
-            case '2nd Fertilization': newStatus = 'Vegetative'; newProgress = 40; break;
-            case 'Flower Forcing': newStatus = 'Flowering'; newProgress = 60; break;
-            case 'Fruit Shading': newStatus = 'Maturation'; newProgress = 80; break;
-            case 'Harvest': newStatus = 'Harvesting'; newProgress = 100; break;
+            case '1st Fertilization':
+                newStatus = 'Vegetative';
+                newProgress = 20;
+                updatePayload = { status_name: newStatus, progress: newProgress };
+                break;
+            case '2nd Fertilization':
+                newStatus = 'Vegetative';
+                newProgress = 40;
+                updatePayload = { status_name: newStatus, progress: newProgress };
+                break;
+            case 'Flower Forcing':
+                newStatus = 'Flowering';
+                newProgress = 60;
+                updatePayload = { status_name: newStatus, progress: newProgress };
+                break;
+            case 'Fruit Shading':
+                newStatus = 'Maturation';
+                newProgress = 80;
+                updatePayload = { status_name: newStatus, progress: newProgress };
+                break;
+            case 'Harvest':
+                newStatus = 'Harvesting';
+                newProgress = 100;
+                updatePayload = { status_name: newStatus, progress: newProgress };
+                break;
+            case 'Harvested':
+                newStatus = 'Harvested';
+                newProgress = 100;
+                const todayIso = formatPHDate(new Date()); // Itala ang eksaktong petsa ngayon ng pag-ani
+                updatePayload = { status_name: newStatus, progress: newProgress, harvested_date: todayIso };
+                break;
             default: return;
         }
 
-        const { error } = await supabase.from('farm').update({
-            status_name: newStatus, progress: newProgress, end_date: farm.end_date, current_delay: farm.live_delay
-        }).eq('id', farm.id);
+        const { error } = await supabase.from('farm').update(updatePayload).eq('id', farm.id);
 
         if (!error) fetchFarmerData(userId);
     };
 
     return (
         <div className="farmer-portal bg-light min-vh-100">
-            <nav className="navbar navbar-dark p-3 shadow-sm">
+            <nav className="navbar navbar-dark p-3 shadow-sm bg-lpmpc-green" style={{ backgroundColor: '#468432' }}>
                 <div className="container-fluid">
-                    <h4 className="fw-bold m-0 text-gold">LPMPC</h4>
-                    <button type="button" className="settings-icon-btn" data-bs-toggle="modal" data-bs-target="#settingsModal">⚙</button>
+                    <h4 className="fw-bold m-0 text-white">LPMPC Farmer Portal</h4>
+                    <div className="d-flex align-items-center gap-2">
+                        <button type="button" className="btn btn-sm btn-outline-light rounded-3 px-3 fw-bold text-uppercase" style={{ fontSize: '11px' }} data-bs-toggle="modal" data-bs-target="#settingsModal">Settings</button>
+                        <button type="button" className="btn btn-sm btn-outline-light rounded-3 px-3 fw-bold text-uppercase" style={{ fontSize: '11px', color: '#ffffff' }} onClick={handleFarmerSignOut}>Sign Out</button>
+                    </div>
                 </div>
             </nav>
 
             <div className="container py-4">
                 <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
-                    <div><h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4">BATCH MANAGEMENT</h2></div>
-                    <div className="date-display fw-bold text-uppercase small lpmpc-green">{dateStr}</div>
+                    <div><h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4" style={{ color: '#468432' }}>BATCH MANAGEMENT</h2></div>
+                    <div className="date-display fw-bold text-uppercase small lpmpc-green" style={{ color: '#468432' }}>{dateStr}</div>
                 </div>
 
                 <div className="card border-0 rounded-0 mb-3 p-3 bg-white">
-                    {/* Synchronized query handler injection row */}
                     <input type="text" className="form-control" placeholder="Search batch ID..." value={searchQuery} onChange={filterTimeline} />
                 </div>
 
@@ -451,7 +515,7 @@ const FarmerDashboard = () => {
                     <div className="col-12 col-lg-4">
                         <div className="card border-0 rounded-0 shadow-sm bg-white h-100">
                             <div className="card-header bg-light border-bottom rounded-0 py-3">
-                                <h5 className="fw-bold m-0 small text-uppercase lpmpc-green">Log Crop Production Batch</h5>
+                                <h5 className="fw-bold m-0 small text-uppercase" style={{ color: '#468432' }}>Log Crop Production Batch</h5>
                             </div>
                             <div className="card-body p-4">
                                 <form onSubmit={handleSaveBatch}>
@@ -467,7 +531,7 @@ const FarmerDashboard = () => {
                                         <span className="fw-bold small text-uppercase text-success d-block mb-2">Predictive Growth Matrix</span>
                                         <input type="text" className="form-control rounded-0 bg-white fw-bold text-success border-success" value={estimatedHarvest || 'Select Valid Date'} readOnly />
                                     </div>
-                                    <button type="submit" className="btn btn-custom-green w-100 rounded-0 text-uppercase fw-bold py-2 shadow-sm">Save Production Batch</button>
+                                    <button type="submit" className="btn w-100 rounded-0 text-uppercase fw-bold py-2 shadow-sm text-white" style={{ backgroundColor: '#468432' }}>Save Production Batch</button>
                                 </form>
                             </div>
                         </div>
@@ -475,21 +539,45 @@ const FarmerDashboard = () => {
 
                     <div className="col-12 col-lg-8">
                         <div className="card border-0 rounded-0 shadow-sm bg-white h-100">
-                            <div className="card-header bg-light border-bottom rounded-0 py-3">
+                            <div className="card-header bg-light border-bottom rounded-0 py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
                                 <h5 className="fw-bold m-0 small text-uppercase">Active Farm Batches</h5>
+
+                                <div className="d-flex align-items-center gap-2">
+                                    <span className="small text-muted fw-bold text-uppercase" style={{ fontSize: '11px' }}>Filter Status:</span>
+                                    <select
+                                        className="form-select form-select-sm rounded-0 border-secondary fw-bold text-uppercase"
+                                        style={{ fontSize: '11px', width: '150px' }}
+                                        value={statusFilter}
+                                        onChange={(e) => setStatusFilter(e.target.value)}
+                                    >
+                                        <option value="ALL">All Batches</option>
+                                        <option value="VEGETATIVE">Vegetative</option>
+                                        <option value="FLOWERING">Flowering</option>
+                                        <option value="MATURATION">Maturation</option>
+                                        <option value="HARVESTING">Harvesting</option>
+                                        <option value="HARVESTED">Harvested</option>
+                                    </select>
+                                </div>
                             </div>
+
                             <div className="table-responsive">
                                 <table className="table table-hover align-middle mb-0">
                                     <thead className="table-light text-uppercase small fw-bold">
                                         <tr>
-                                            <th className="ps-4">Batch ID</th><th>Planting Date</th><th>Status</th><th>Progress</th><th>Predicted Harvest</th>
+                                            <th className="ps-4">Batch ID</th><th>Planting Date</th><th>Status</th><th>Progress</th><th>Harvest Details</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {filteredFarms.length > 0 ? (
                                             filteredFarms.map((farm) => {
                                                 const s = (farm.status_name || 'vegetative').toLowerCase();
-                                                const badgeColors = { vegetative: 'bg-success text-white', flowering: 'bg-pink text-white', maturation: 'bg-warning text-dark', harvesting: 'bg-info text-white' };
+                                                const badgeColors = {
+                                                    vegetative: 'bg-success text-white',
+                                                    flowering: 'bg-pink text-white',
+                                                    maturation: 'bg-warning text-dark',
+                                                    harvesting: 'bg-info text-white',
+                                                    harvested: 'bg-secondary text-white'
+                                                };
                                                 const badgeClass = badgeColors[s] || 'bg-success text-white';
 
                                                 return (
@@ -498,12 +586,22 @@ const FarmerDashboard = () => {
                                                         <td>{farm.start_date ? new Date(farm.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}</td>
                                                         <td><span className={`badge px-2 py-1 ${badgeClass}`}>{farm.status_name || 'Vegetative'}</span></td>
                                                         <td><div className="d-flex align-items-center justify-content-center text-white fw-bold rounded" style={{ backgroundColor: '#468432', width: '80px', height: '30px', fontSize: '0.85rem' }}>{farm.progress || 0}%</div></td>
-                                                        <td className="fw-bold text-secondary small">{farm.end_date ? new Date(farm.end_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'N/A'}</td>
+                                                        <td className="fw-bold text-secondary small">
+                                                            {farm.status_name === 'Harvested' ? (
+                                                                <span className="text-success">
+                                                                    {farm.harvested_date
+                                                                        ? `Harvested on: ${new Date(farm.harvested_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                                                                        : 'Harvested (Completed)'}
+                                                                </span>
+                                                            ) : (
+                                                                <span>Pred: {farm.end_date ? new Date(farm.end_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'N/A'}</span>
+                                                            )}
+                                                        </td>
                                                     </tr>
                                                 );
                                             })
                                         ) : (
-                                            <tr><td colSpan="5" className="text-center py-4">No records found.</td></tr>
+                                            <tr><td colSpan="5" className="text-center py-4 text-muted small">No farm batches found matching criteria.</td></tr>
                                         )}
                                     </tbody>
                                 </table>
@@ -517,7 +615,7 @@ const FarmerDashboard = () => {
                 <div className="modal-dialog modal-dialog-centered">
                     <div className="modal-content rounded-0 border shadow">
                         <div className="modal-header bg-light rounded-0">
-                            <h6 className="modal-title fw-bold text-uppercase lpmpc-green" id="settingsModalLabel">Account Settings</h6>
+                            <h6 className="modal-title fw-bold text-uppercase" style={{ color: '#468432' }} id="settingsModalLabel">Account Settings</h6>
                             <button type="button" className="btn-close rounded-0 shadow-none" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
                         <div className="modal-body p-4">
@@ -541,7 +639,7 @@ const FarmerDashboard = () => {
                                     </div>
                                     <div className="col-12 text-end pt-3">
                                         <button type="button" className="btn btn-sm btn-outline-secondary rounded-0 me-2 text-uppercase fw-bold" data-bs-dismiss="modal">Cancel</button>
-                                        <button type="submit" className="btn btn-sm btn-custom-green rounded-0 text-uppercase fw-bold px-3">Update Credentials</button>
+                                        <button type="submit" className="btn btn-sm rounded-0 text-uppercase fw-bold px-3 text-white" style={{ backgroundColor: '#468432' }}>Update Credentials</button>
                                     </div>
                                 </div>
                             </form>
@@ -550,19 +648,18 @@ const FarmerDashboard = () => {
                 </div>
             </div>
 
-            {/* Activity Modal with Biological Time-Lock Checks */}
             {selectedFarm && (
                 <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
                     <div className="modal-dialog modal-dialog-centered">
                         <div className="modal-content rounded-0">
                             <div className="modal-header bg-light rounded-0">
-                                <h6 className="modal-title fw-bold text-uppercase lpmpc-green">Activities: {selectedFarm.batch_id}</h6>
+                                <h6 className="modal-title fw-bold text-uppercase" style={{ color: '#468432' }}>Activities: {selectedFarm.batch_id}</h6>
                                 <button className="btn-close" onClick={() => setSelectedFarm(null)}></button>
                             </div>
                             <div className="modal-body p-4">
-                                {['1st Fertilization', '2nd Fertilization', 'Flower Forcing', 'Fruit Shading', 'Harvest'].map((act, index) => {
-                                    const threshold = (index + 1) * 20;
-                                    const isDone = selectedFarm.progress >= threshold;
+                                {['1st Fertilization', '2nd Fertilization', 'Flower Forcing', 'Fruit Shading', 'Harvest', 'Harvested'].map((act, index) => {
+                                    const threshold = (index + 1) * (100 / 6);
+                                    const isDone = selectedFarm.progress >= threshold || (act === 'Harvested' && selectedFarm.status_name === 'Harvested');
                                     let timeConstraintLocked = false;
                                     const days = selectedFarm.days_elapsed || 0;
 
@@ -571,8 +668,9 @@ const FarmerDashboard = () => {
                                     if (act === 'Flower Forcing' && days < 300) timeConstraintLocked = true;
                                     if (act === 'Fruit Shading' && days < 360) timeConstraintLocked = true;
                                     if (act === 'Harvest' && new Date() < new Date(selectedFarm.end_date)) timeConstraintLocked = true;
+                                    if (act === 'Harvested' && selectedFarm.status_name !== 'Harvesting') timeConstraintLocked = true;
 
-                                    const isLockedByProgress = selectedFarm.progress < (index * 20);
+                                    const isLockedByProgress = selectedFarm.progress < (index * (100 / 6)) && act !== 'Harvested';
                                     const finalDisableTrigger = isLockedByProgress || isDone || timeConstraintLocked;
 
                                     return (
@@ -584,7 +682,7 @@ const FarmerDashboard = () => {
                                             disabled={finalDisableTrigger}
                                             onClick={() => { handleActivityTrigger(selectedFarm, act); setSelectedFarm(null); }}
                                         >
-                                            {isDone ? `✔ ${act} (DONE)` : timeConstraintLocked ? `${act} (LOCKED - UNDER DEVELOPMENT)` : act}
+                                            {isDone ? `✔ ${act} (DONE)` : timeConstraintLocked ? `${act} (LOCKED)` : act}
                                         </button>
                                     );
                                 })}

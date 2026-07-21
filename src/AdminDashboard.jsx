@@ -3,6 +3,7 @@ import { Chart, registerables } from 'chart.js';
 import { Timeline } from 'vis-timeline/standalone';
 import { DataSet } from 'vis-data';
 import { createClient } from '@supabase/supabase-js';
+import { useNavigate } from 'react-router-dom';
 import emailjs from '@emailjs/browser';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -14,6 +15,7 @@ const supabaseKey = 'sb_publishable_cKKlFv0eCaArfywT-fqzaQ_QEXrLLbm';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const AdminDashboard = () => {
+    const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('v-dash');
     const [dateStr, setDateStr] = useState('');
     const [salesView, setSalesView] = useState('paid');
@@ -25,13 +27,33 @@ const AdminDashboard = () => {
     const [inventoryStock, setInventoryStock] = useState([]);
     const [recentScannedBatches, setRecentScannedBatches] = useState([]);
     const [isInventoryLoading, setIsInventoryLoading] = useState(true);
+    const [farmStatusFilter, setFarmStatusFilter] = useState('ALL');
+    const [searchQuery, setSearchQuery] = useState('');
 
-    const colorMap = {
-        'PID-1': '#468432',
-        'PID-2': '#5da441',
-        'PID-3': '#ffd700',
-        'PID-4': '#ffef91',
-        'PID-R': '#6c757d'
+    // REAL-TIME MESSAGES STATE
+    const [messages, setMessages] = useState([]);
+    const [isMessagesLoading, setIsMessagesLoading] = useState(true);
+    const [selectedMsg, setSelectedMsg] = useState(null);
+    const [showInboxModal, setShowInboxModal] = useState(false);
+
+    // LOGOUT HANDLER
+    const handleSignOut = async () => {
+        if (window.confirm("Are you sure you want to log out of the Admin Portal?")) {
+            try {
+                await supabase.auth.signOut();
+
+                localStorage.clear();
+                sessionStorage.clear();
+
+                window.close();
+
+                navigate('/admin-login', { replace: true });
+
+            } catch (error) {
+                console.error("Logout Error:", error.message);
+                alert("Failed to log out cleanly.");
+            }
+        }
     };
 
     // REFS FOR LIBRARIES
@@ -101,7 +123,39 @@ const AdminDashboard = () => {
     const productionCount = supabaseOrders.filter(o => o.order_status === 'Processing' || o.order_status === 'Confirmed').length;
     const completedCount = supabaseOrders.filter(o => o.order_status === 'Received' || o.order_status === 'In Transit').length;
 
-    // FETCHES ORDERS FROM DATABASE
+    // FETCHES MESSAGES FROM SUPABASE
+    const fetchMessagesFromSupabase = async () => {
+        try {
+            setIsMessagesLoading(true);
+            const { data, error } = await supabase
+                .from('messages')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+            setMessages(data || []);
+        } catch (error) {
+            console.error('Error fetching inbox messages:', error.message);
+        } finally {
+            setIsMessagesLoading(false);
+        }
+    };
+
+    const handleReadMessage = async (msg) => {
+        setSelectedMsg(msg);
+        if (msg.status === 'Unread') {
+            try {
+                await supabase
+                    .from('messages')
+                    .update({ status: 'Read' })
+                    .eq('id', msg.id);
+                fetchMessagesFromSupabase();
+            } catch (err) {
+                console.error("Error updating message status:", err);
+            }
+        }
+    };
+
     const fetchOrdersFromSupabase = async () => {
         try {
             setIsLoading(true);
@@ -122,7 +176,6 @@ const AdminDashboard = () => {
         }
     };
 
-    // FETCHES FARMS FROM DATABASE
     const fetchFarmsFromSupabase = async () => {
         try {
             setIsFarmsLoading(true);
@@ -141,7 +194,6 @@ const AdminDashboard = () => {
         }
     };
 
-    // FETCH DYNAMIC INVENTORY & LOGS FROM SUPABASE (WITH PID-R / RESIDUAL PARSING)
     const fetchBastosInventory = async () => {
         try {
             setIsInventoryLoading(true);
@@ -153,7 +205,6 @@ const AdminDashboard = () => {
             if (error) throw error;
 
             if (data) {
-                // 1. Calculate live weight balances per PID Grade
                 const gradeWeights = {
                     'PID-1': 0,
                     'PID-2': 0,
@@ -164,7 +215,7 @@ const AdminDashboard = () => {
 
                 data.forEach((row) => {
                     let rawGrade = row.grade ? row.grade.trim().toUpperCase() : '';
-                    let gradeKey = 'PID-R'; // Fallback default
+                    let gradeKey = 'PID-R';
 
                     if (rawGrade.includes('PID-1')) gradeKey = 'PID-1';
                     else if (rawGrade.includes('PID-2')) gradeKey = 'PID-2';
@@ -176,7 +227,6 @@ const AdminDashboard = () => {
                     gradeWeights[gradeKey] += bundleWeight;
                 });
 
-                // 2. Build Dynamic Stock Ledger Array for PID-1 through PID-R
                 const gradeMetadata = [
                     { id: 'PID-1', name: 'PID-1' },
                     { id: 'PID-2', name: 'PID-2' },
@@ -203,12 +253,10 @@ const AdminDashboard = () => {
 
                 setInventoryStock(dynamicStockLedger);
 
-                // 3. Update Chart Dataset values (5-part wheel)
                 const labels = ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'];
                 const values = labels.map(g => gradeWeights[g] || 0);
                 setBastosChartData({ labels, values });
 
-                // 4. Set Recent Scanned Batches from Top 5 Scanned Logs
                 const recentLogs = data.slice(0, 5).map((log, idx) => {
                     let rawGrade = log.grade ? log.grade.trim().toUpperCase() : 'PID-R';
                     let cleanGrade = rawGrade;
@@ -230,8 +278,7 @@ const AdminDashboard = () => {
         }
     };
 
-    // PROCESSES AND TRANSFORMS SUPABASE DATA FOR THE TIMELINE
-    const updateTimelineData = (farmData) => {
+    const updateTimelineData = (farmData, statusFilterVal, searchVal) => {
         if (!groups.current || !items.current) return;
 
         groups.current.clear();
@@ -241,12 +288,20 @@ const AdminDashboard = () => {
         const dynamicItems = [];
 
         farmData.forEach((farm) => {
+            const batchMatch = (farm.batch_id || '').toLowerCase().includes((searchVal || '').toLowerCase());
+            const farmNameMatch = (farm.farm_name || '').toLowerCase().includes((searchVal || '').toLowerCase());
+            const matchesSearch = batchMatch || farmNameMatch;
+
+            const matchesDropdown = statusFilterVal === 'ALL' || (farm.status_name || '').toUpperCase() === statusFilterVal;
+
+            if (!matchesSearch || !matchesDropdown) return; // Laktawan kung hindi pasok sa filter
+
             const groupId = String(farm.id);
             const itemId = `item_${farm.id}`;
 
             uniqueFarms.push({
                 id: groupId,
-                content: farm.farm_name
+                content: `${farm.batch_id} (${farm.farm_name})`
             });
 
             const phaseName = farm.status_name || 'Vegetative';
@@ -256,7 +311,8 @@ const AdminDashboard = () => {
                 vegetative: 'bar-veg',
                 flowering: 'bar-flow',
                 maturation: 'bar-maturation',
-                harvesting: 'bar-harvest'
+                harvesting: 'bar-harvest',
+                harvested: 'bar-harvested'
             };
 
             dynamicItems.push({
@@ -278,18 +334,45 @@ const AdminDashboard = () => {
             timelineRef.current.redraw();
 
             setTimeout(() => {
-                if (timelineRef.current && farmData.length > 0) {
+                if (timelineRef.current && uniqueFarms.length > 0) {
                     timelineRef.current.fit({ animation: false });
                 }
             }, 50);
         }
     };
 
-    // AUTOMATIC LIVE SYNC LISTENER
     useEffect(() => {
+        updateTimelineData(farms, farmStatusFilter, searchQuery);
+    }, [farmStatusFilter, searchQuery, farms]);
+
+    useEffect(() => {
+
+        const checkAdminAuth = async () => {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) {
+                    navigate('/admin-login', { replace: true });
+                    return;
+                }
+
+                // Tiyaking role === admin talaga
+                const { data: profile } = await supabase
+                    .from('users')
+                    .select('role')
+                    .eq('id', session.user.id)
+                    .single();
+
+                if (!profile || profile.role !== 'admin') {
+                    await supabase.auth.signOut();
+                    navigate('/admin-login', { replace: true });
+                }
+            };
+
+            checkAdminAuth();
+
         fetchOrdersFromSupabase();
         fetchBastosInventory();
         fetchFarmsFromSupabase();
+        fetchMessagesFromSupabase();
 
         const channel = supabase
             .channel('admin-orders-sync')
@@ -316,6 +399,15 @@ const AdminDashboard = () => {
             )
             .subscribe();
 
+        const messageChannel = supabase
+            .channel('admin-message-sync')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'messages' },
+                () => { fetchMessagesFromSupabase(); }
+            )
+            .subscribe();
+
         const modalElement = document.getElementById('orderDetailModal');
         const handleModalHidden = () => {
             setSelectedOrder(null);
@@ -329,13 +421,13 @@ const AdminDashboard = () => {
             supabase.removeChannel(channel);
             supabase.removeChannel(bastosChannel);
             supabase.removeChannel(farmChannel);
+            supabase.removeChannel(messageChannel);
             if (modalElement) {
                 modalElement.removeEventListener('hidden.bs.modal', handleModalHidden);
             }
         };
     }, []);
 
-    // AUTOMATED APPROVE/SOURCING/REJECT LOGIC
     const handleApproveOrder = async (order) => {
         const primaryItem = order.order_items?.[0] || {};
         let orderedGrade = primaryItem.fiber_type ? primaryItem.fiber_type.trim().toUpperCase() : 'PID-1';
@@ -343,12 +435,10 @@ const AdminDashboard = () => {
 
         const orderedWeight = Number(primaryItem.fiber_weight) || 1.0;
 
-        // Check Warehouse Inventory from live database state
         const targetStock = inventoryStock.find(item => item.id === orderedGrade);
         const availableWarehouseKg = targetStock ? targetStock.stockKg : 0;
 
         if (availableWarehouseKg >= orderedWeight) {
-            // Sufficient Warehouse Stock
             try {
                 const { error } = await supabase
                     .from('orders')
@@ -361,13 +451,11 @@ const AdminDashboard = () => {
                 alert("Error approving order: " + error.message);
             }
         } else {
-            // Deficit: Check Registered Farm Sourcing Timelines
             const availableFarms = farms.filter(f =>
                 (f.status_name === 'Harvesting' || f.status_name === 'Maturation')
             );
 
             if (availableFarms.length > 0) {
-                // Farms Available: Route to Leaf Outsourcing
                 try {
                     const { error } = await supabase
                         .from('orders')
@@ -380,7 +468,6 @@ const AdminDashboard = () => {
                     alert("Error processing sourcing route: " + error.message);
                 }
             } else {
-                // AUTOMATED ORDER REJECTION PROTOCOL
                 alert(`AUTOMATED ORDER REJECTION PROTOCOL TRIGGERED!\n\nReason: Warehouse inventory is deficient (${availableWarehouseKg} kg) and NO registered farms currently have harvestable leaves available.`);
 
                 try {
@@ -397,7 +484,6 @@ const AdminDashboard = () => {
         }
     };
 
-    // MANUAL REJECT ORDER
     const handleRejectOrder = async (orderId) => {
         if (window.confirm("Are you sure you want to reject this request? Entry will be preserved for customer history.")) {
             try {
@@ -450,7 +536,6 @@ const AdminDashboard = () => {
             });
         }
 
-        // DOUGHNUT CHART (THE WHEEL WITH PID-1 to PID-R)
         if (chartCanvas.current && !chartRef.current) {
             chartRef.current = new Chart(chartCanvas.current, {
                 type: 'doughnut',
@@ -788,31 +873,46 @@ const AdminDashboard = () => {
         }
     };
 
+    const unreadMsgCount = messages.filter(m => m.status === 'Unread').length;
+
     return (
         <div className="admin-layout admin-layout-wrapper">
             <div className="container-fluid p-0">
                 <div className="row g-0">
 
-                    {/* SIDE NAVIGATION LAYOUT */}
-                    <nav className="col-md-3 col-lg-2 bg-lpmpc-green vh-100 position-fixed shadow-sm">
-                        <div className="p-4 border-bottom border-white border-opacity-25">
-                            <h4 className="fw-bold m-0 text-gold">LPMPC Admin</h4>
+                    {/* SIDE NAVIGATION LAYOUT WITH SIGN OUT BUTTON */}
+                    <nav className="col-md-3 col-lg-2 bg-lpmpc-green vh-100 position-fixed shadow-sm d-flex flex-column justify-content-between pb-3">
+                        <div>
+                            <div className="p-4 border-bottom border-white border-opacity-25">
+                                <h4 className="fw-bold m-0 text-gold">LPMPC Admin</h4>
+                            </div>
+                            <div className="nav flex-column mt-md-3">
+                                <button className={`admin-tab-btn ${activeTab === 'v-dash' ? 'active' : ''}`} onClick={() => setActiveTab('v-dash')}>
+                                    <span className="material-symbols-outlined">dashboard</span> DASHBOARD
+                                </button>
+                                <button className={`admin-tab-btn ${activeTab === 'v-farm' ? 'active' : ''}`} onClick={() => setActiveTab('v-farm')}>
+                                    <span className="material-symbols-outlined">timeline</span> FARM
+                                </button>
+                                <button className={`admin-tab-btn ${activeTab === 'v-inv' ? 'active' : ''}`} onClick={() => setActiveTab('v-inv')}>
+                                    <span className="material-symbols-outlined">inventory</span> INVENTORY
+                                </button>
+                                <button className={`admin-tab-btn ${activeTab === 'v-order' ? 'active' : ''}`} onClick={() => setActiveTab('v-order')}>
+                                    <span className="material-symbols-outlined">shopping_bag</span> ORDERS
+                                </button>
+                                <button className={`admin-tab-btn ${activeTab === 'v-sales' ? 'active' : ''}`} onClick={() => setActiveTab('v-sales')}>
+                                    <span className="material-symbols-outlined">payments</span> SALES
+                                </button>
+                            </div>
                         </div>
-                        <div className="nav flex-column mt-md-3">
-                            <button className={`admin-tab-btn ${activeTab === 'v-dash' ? 'active' : ''}`} onClick={() => setActiveTab('v-dash')}>
-                                <span className="material-symbols-outlined">dashboard</span> DASHBOARD
-                            </button>
-                            <button className={`admin-tab-btn ${activeTab === 'v-farm' ? 'active' : ''}`} onClick={() => setActiveTab('v-farm')}>
-                                <span className="material-symbols-outlined">timeline</span> FARM
-                            </button>
-                            <button className={`admin-tab-btn ${activeTab === 'v-inv' ? 'active' : ''}`} onClick={() => setActiveTab('v-inv')}>
-                                <span className="material-symbols-outlined">inventory</span> INVENTORY
-                            </button>
-                            <button className={`admin-tab-btn ${activeTab === 'v-order' ? 'active' : ''}`} onClick={() => setActiveTab('v-order')}>
-                                <span className="material-symbols-outlined">shopping_bag</span> ORDERS
-                            </button>
-                            <button className={`admin-tab-btn ${activeTab === 'v-sales' ? 'active' : ''}`} onClick={() => setActiveTab('v-sales')}>
-                                <span className="material-symbols-outlined">payments</span> SALES
+
+                        {/* SIGN OUT BUTTON */}
+                        <div className="px-3 border-top border-white border-opacity-25 pt-3">
+                            <button
+                                className="btn btn-outline-light w-100 d-flex align-items-center justify-content-center fw-bold text-uppercase py-2 rounded-3"
+                                style={{ fontSize: '11px', letterSpacing: '0.5px' }}
+                                onClick={handleSignOut}
+                            >
+                                <span className="material-symbols-outlined me-2" style={{ fontSize: '1.2rem' }}>logout</span> SIGN OUT
                             </button>
                         </div>
                     </nav>
@@ -820,7 +920,7 @@ const AdminDashboard = () => {
                     {/* MAIN CONTROLLER CONTAINER */}
                     <main className="col-md-9 col-lg-10 offset-md-3 offset-lg-2 p-3 p-md-4">
 
-                        {/* [TAB 1] : DASHBOARD LAYOUT */}
+                        {/* [TAB 1] : DASHBOARD LAYOUT WITH INQUIRIES POPUP CARD */}
                         <div className={`admin-tab-content ${activeTab !== 'v-dash' ? 'd-none' : ''}`}>
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
                                 <div>
@@ -830,7 +930,7 @@ const AdminDashboard = () => {
                                 <div className="date-display fw-bold text-uppercase small text-lpmpc">{dateStr}</div>
                             </div>
 
-                            <div className="row g-3 mb-5">
+                            <div className="row g-3 mb-4">
                                 {[
                                     { label: 'Total Sales Revenue', count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`, color: '#468432' },
                                     { label: 'Registered Prospect Farms', count: isFarmsLoading ? '...' : farms.length, color: '#b59a00' },
@@ -843,6 +943,69 @@ const AdminDashboard = () => {
                                         </div>
                                     </div>
                                 ))}
+                            </div>
+
+                            {/* INQUIRIES & MESSAGES DASHBOARD WIDGET */}
+                            <div className="card border-0 shadow-sm rounded-4 p-4 bg-white mb-4">
+                                <div className="d-flex justify-content-between align-items-center mb-3">
+                                    <div className="d-flex align-items-center">
+                                        <span className="material-symbols-outlined text-success me-2" style={{ fontSize: '1.8rem' }}>mail</span>
+                                        <div>
+                                            <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.9rem' }}>Marketplace Inquiries Inbox</h6>
+                                            <small className="text-muted" style={{ fontSize: '0.75rem' }}>Direct messages received from the customer website</small>
+                                        </div>
+                                    </div>
+                                    <button
+                                        className="btn btn-sm btn-success rounded-pill px-4 fw-bold shadow-sm"
+                                        onClick={() => setShowInboxModal(true)}
+                                    >
+                                        View All Messages ({unreadMsgCount} Unread)
+                                    </button>
+                                </div>
+
+                                <div className="table-responsive">
+                                    <table className="table table-hover align-middle mb-0" style={{ fontSize: '0.85rem' }}>
+                                        <thead className="bg-light text-muted small text-uppercase">
+                                            <tr>
+                                                <th>Sender</th>
+                                                <th>Subject</th>
+                                                <th>Date Logged</th>
+                                                <th>Status</th>
+                                                <th className="text-end">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {isMessagesLoading ? (
+                                                <tr><td colSpan="5" className="text-center py-3">Loading messages...</td></tr>
+                                            ) : messages.length > 0 ? (
+                                                messages.slice(0, 3).map((msg) => (
+                                                    <tr key={msg.id} className={msg.status === 'Unread' ? 'fw-bold bg-light-subtle' : ''}>
+                                                        <td>{msg.sender_name} <small className="text-muted d-block">{msg.sender_email}</small></td>
+                                                        <td className="text-dark">{msg.subject}</td>
+                                                        <td className="text-muted small">{new Date(msg.created_at).toLocaleDateString()}</td>
+                                                        <td>
+                                                            <span className={`badge rounded-pill ${msg.status === 'Unread' ? 'bg-danger' : 'bg-secondary'}`}>
+                                                                {msg.status}
+                                                            </span>
+                                                        </td>
+                                                        <td className="text-end">
+                                                            <button
+                                                                className="btn btn-sm btn-outline-success rounded-pill px-3 py-1 fw-bold"
+                                                                onClick={() => {
+                                                                    handleReadMessage(msg);
+                                                                }}
+                                                            >
+                                                                Read Message
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            ) : (
+                                                <tr><td colSpan="5" className="text-center py-3 text-muted">No messages received yet.</td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
 
                             <div className="row g-3">
@@ -895,9 +1058,28 @@ const AdminDashboard = () => {
                             </div>
 
                             <div className="card border rounded-0 shadow-sm bg-white no-hover mt-4">
-                                <div className="card-header bg-light border-bottom rounded-0 py-3">
+                                <div className="card-header bg-light border-bottom rounded-0 py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
                                     <h5 className="fw-bold m-0 small text-uppercase">Active Prospect Farms</h5>
+
+                                    {/* STATUS FILTER DROPDOWN */}
+                                    <div className="d-flex align-items-center gap-2">
+                                        <span className="small text-muted fw-bold text-uppercase" style={{ fontSize: '11px' }}>Filter Status:</span>
+                                        <select
+                                            className="form-select form-select-sm rounded-0 border-secondary fw-bold text-uppercase"
+                                            style={{ fontSize: '11px', width: '150px' }}
+                                            value={farmStatusFilter}
+                                            onChange={(e) => setFarmStatusFilter(e.target.value)}
+                                        >
+                                            <option value="ALL">All Batches</option>
+                                            <option value="VEGETATIVE">Vegetative</option>
+                                            <option value="FLOWERING">Flowering</option>
+                                            <option value="MATURATION">Maturation</option>
+                                            <option value="HARVESTING">Harvesting</option>
+                                            <option value="HARVESTED">Harvested</option>
+                                        </select>
+                                    </div>
                                 </div>
+
                                 <div className="table-responsive">
                                     <table className="table table-hover align-middle mb-0" style={{ minWidth: '700px' }}>
                                         <thead className="table-light text-uppercase small fw-bold">
@@ -905,48 +1087,66 @@ const AdminDashboard = () => {
                                                 <th className="ps-4">Batch ID</th>
                                                 <th>Farm Name</th>
                                                 <th>Owner / Contact</th>
-                                                <th className="d-none d-md-table-cell">Contact Number</th>
                                                 <th>Status</th>
                                                 <th style={{ width: '150px' }}>Progress</th>
+                                                <th>Harvest Details</th> {/* Bagong Kolum */}
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {isFarmsLoading ? (
                                                 <tr><td colSpan="6" className="text-center">Syncing farm database...</td></tr>
-                                            ) : farms.map((farm) => {
-                                                const s = (farm.status_name || 'vegetative').toLowerCase();
+                                            ) : farms.filter(f => {
+                                                const matchesSearch = (f.batch_id || '').toLowerCase().includes(searchQuery.toLowerCase()) || (f.farm_name || '').toLowerCase().includes(searchQuery.toLowerCase());
+                                                const matchesDrop = farmStatusFilter === 'ALL' || (f.status_name || '').toUpperCase() === farmStatusFilter;
+                                                return matchesSearch && matchesDrop;
+                                            }).length > 0 ? (
+                                                farms.filter(f => {
+                                                    const matchesSearch = (f.batch_id || '').toLowerCase().includes(searchQuery.toLowerCase()) || (f.farm_name || '').toLowerCase().includes(searchQuery.toLowerCase());
+                                                    const matchesDrop = farmStatusFilter === 'ALL' || (f.status_name || '').toUpperCase() === farmStatusFilter;
+                                                    return matchesSearch && matchesDrop;
+                                                }).map((farm) => {
+                                                    const s = (farm.status_name || 'vegetative').toLowerCase();
 
-                                                const badgeColors = {
-                                                    vegetative: 'bg-success text-white',
-                                                    flowering: 'bg-pink text-white',
-                                                    maturation: 'bg-warning text-dark',
-                                                    harvesting: 'bg-info text-white'
-                                                };
-                                                const badgeClass = badgeColors[s] || 'bg-success text-white';
+                                                    const badgeColors = {
+                                                        vegetative: 'bg-success text-white',
+                                                        flowering: 'bg-pink text-white',
+                                                        maturation: 'bg-warning text-dark',
+                                                        harvesting: 'bg-info text-white',
+                                                        harvested: 'bg-secondary text-white'
+                                                    };
+                                                    const badgeClass = badgeColors[s] || 'bg-success text-white';
 
-                                                return (
-                                                    <tr key={farm.id}>
-                                                        <td className="ps-4 fw-bold">{farm.batch_id}</td>
-                                                        <td>{farm.farm_name}</td>
-                                                        <td>{farm.owner_name}</td>
-                                                        <td>{farm.contact_number}</td>
-                                                        <td><span className={`badge ${badgeClass}`}>{farm.status_name}</span></td>
-                                                        <td>
-                                                            <div
-                                                                className="d-flex align-items-center justify-content-center text-white fw-bold rounded"
-                                                                style={{
-                                                                    backgroundColor: '#468432',
-                                                                    width: '80px',
-                                                                    height: '30px',
-                                                                    fontSize: '0.85rem'
-                                                                }}
-                                                            >
-                                                                {farm.progress || 0}%
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
+                                                    return (
+                                                        <tr key={farm.id}>
+                                                            <td className="ps-4 fw-bold">{farm.batch_id}</td>
+                                                            <td>{farm.farm_name}</td>
+                                                            <td>{farm.owner_name}</td>
+                                                            <td><span className={`badge ${badgeClass}`}>{farm.status_name || 'Vegetative'}</span></td>
+                                                            <td>
+                                                                <div
+                                                                    className="d-flex align-items-center justify-content-center text-white fw-bold rounded"
+                                                                    style={{ backgroundColor: '#468432', width: '80px', height: '30px', fontSize: '0.85rem' }}
+                                                                >
+                                                                    {farm.progress || 0}%
+                                                                </div>
+                                                            </td>
+                                                            <td className="fw-bold text-secondary small">
+                                                                {farm.status_name === 'Harvested' ? (
+                                                                    <span className="text-success">
+                                                                        {farm.harvested_date
+                                                                            ? `Harvested on: ${new Date(farm.harvested_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                                                                            : 'Harvested (Completed)'}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span>Pred: {farm.end_date ? new Date(farm.end_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'N/A'}</span>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })
+                                            ) : (
+                                                <tr><td colSpan="6" className="text-center py-4 text-muted small">No farm batches found matching criteria.</td></tr>
+                                            )}
                                         </tbody>
                                     </table>
                                 </div>
@@ -1375,7 +1575,7 @@ const AdminDashboard = () => {
                             </div>
                         </div>
 
-                        {/* [TAB 5] : SALES TAB SECTION */}
+                        {/* [TAB 5] : SALES TAB SECTION (FULL INTACT TABLES) */}
                         <div className={`admin-tab-content ${activeTab !== 'v-sales' ? 'd-none' : ''}`}>
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
                                 <div>
@@ -1550,6 +1750,98 @@ const AdminDashboard = () => {
                  }
             `}} />
 
+            {/* FULL MESSAGES INBOX POPUP MODAL */}
+            {showInboxModal && (
+                <div className="modal-backdrop d-flex align-items-center justify-content-center p-3" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 2040, backdropFilter: 'blur(3px)' }}>
+                    <div className="card border-0 rounded-4 shadow-lg w-100" style={{ maxWidth: '850px', background: '#ffffff', maxHeight: '85vh', overflow: 'hidden' }}>
+                        <div className="card-header bg-lpmpc-green text-white p-4 d-flex justify-content-between align-items-center">
+                            <div>
+                                <h5 className="fw-bold m-0 text-uppercase d-flex align-items-center" style={{ fontSize: '1.1rem' }}>
+                                    <span className="material-symbols-outlined me-2">inbox</span> Marketplace Messages Inbox
+                                </h5>
+                                <small className="opacity-75">{unreadMsgCount} Unread Inquiry Message(s)</small>
+                            </div>
+                            <button className="btn-close btn-close-white" onClick={() => setShowInboxModal(false)}></button>
+                        </div>
+                        <div className="card-body p-0" style={{ overflowY: 'auto' }}>
+                            <div className="table-responsive">
+                                <table className="table table-hover align-middle mb-0" style={{ fontSize: '0.9rem' }}>
+                                    <thead className="bg-light text-muted small text-uppercase">
+                                        <tr>
+                                            <th className="ps-4 py-3">Sender</th>
+                                            <th className="py-3">Subject</th>
+                                            <th className="py-3">Date Logged</th>
+                                            <th className="py-3">Status</th>
+                                            <th className="text-center pe-4 py-3">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {messages.length > 0 ? (
+                                            messages.map((msg) => (
+                                                <tr key={msg.id} className={msg.status === 'Unread' ? 'fw-bold bg-light-subtle' : ''}>
+                                                    <td className="ps-4 py-3">
+                                                        <div>{msg.sender_name}</div>
+                                                        <small className="text-muted fw-normal">{msg.sender_email}</small>
+                                                    </td>
+                                                    <td className="py-3 text-dark">{msg.subject}</td>
+                                                    <td className="py-3 text-muted small">{new Date(msg.created_at).toLocaleDateString()} {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                                                    <td className="py-3">
+                                                        <span className={`badge rounded-pill ${msg.status === 'Unread' ? 'bg-danger' : 'bg-secondary'}`}>
+                                                            {msg.status}
+                                                        </span>
+                                                    </td>
+                                                    <td className="text-center pe-4 py-3">
+                                                        <button
+                                                            className="btn btn-sm btn-success fw-bold rounded-pill px-3"
+                                                            onClick={() => handleReadMessage(msg)}
+                                                        >
+                                                            Read Content
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        ) : (
+                                            <tr>
+                                                <td colSpan="5" className="text-center py-5 text-muted">No messages found in database inbox.</td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* SINGLE MESSAGE DETAIL PREVIEW MODAL */}
+            {selectedMsg && (
+                <div className="modal-backdrop d-flex align-items-center justify-content-center p-3" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 2060 }}>
+                    <div className="card border-0 rounded-4 shadow-lg w-100" style={{ maxWidth: '600px', background: '#ffffff' }}>
+                        <div className="card-header bg-lpmpc-green text-white p-4 d-flex justify-content-between align-items-center rounded-top-4">
+                            <div>
+                                <h5 className="fw-bold m-0 text-uppercase" style={{ fontSize: '1rem' }}>{selectedMsg.subject}</h5>
+                                <small className="opacity-75">From: {selectedMsg.sender_name} ({selectedMsg.sender_email})</small>
+                            </div>
+                            <button className="btn-close btn-close-white" onClick={() => setSelectedMsg(null)}></button>
+                        </div>
+                        <div className="card-body p-4">
+                            <p className="text-muted small mb-3">Received on {new Date(selectedMsg.created_at).toLocaleString()}</p>
+                            <div className="p-3 bg-light rounded-3 border mb-4" style={{ minHeight: '140px', whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                                {selectedMsg.message}
+                            </div>
+                            <div className="d-flex justify-content-between align-items-center">
+                                <a href={`mailto:${selectedMsg.sender_email}?subject=RE: ${selectedMsg.subject}`} className="btn btn-success fw-bold px-4 rounded-pill">
+                                    <span className="material-symbols-outlined align-middle me-1" style={{ fontSize: '1.1rem' }}>reply</span> Reply via Email
+                                </a>
+                                <button className="btn btn-secondary fw-bold px-4 rounded-pill" onClick={() => setSelectedMsg(null)}>
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* REAL-TIME DECORTICATED FIBER ORDER DETAILS MODAL */}
             <div className="modal fade" id="orderDetailModal" tabIndex="-1" aria-hidden="true" data-bs-backdrop="static">
                 <div className="modal-dialog modal-lg modal-dialog-centered">
@@ -1661,10 +1953,8 @@ const AdminDashboard = () => {
                                         placeholder="Type address & press ENTER..."
                                         required
                                     />
-
                                     <input type="hidden" id="farmer-lat" name="latitude" />
                                     <input type="hidden" id="farmer-lng" name="longitude" />
-
                                     <div id="farmer-map" style={{ height: '250px', width: '100%', marginTop: '10px' }}></div>
                                 </div>
                                 <div className="mb-2">

@@ -16,6 +16,13 @@ const App = () => {
     const [address, setAddress] = useState('');
     const [user, setUser] = useState(null);
 
+    // CONTACT FORM STATES
+    const [msgName, setMsgName] = useState('');
+    const [msgEmail, setMsgEmail] = useState('');
+    const [msgSubject, setMsgSubject] = useState('General Inquiry');
+    const [msgText, setMsgText] = useState('');
+    const [isSendingMsg, setIsSendingMsg] = useState(false);
+
     // BASE FIBER UNIT PRICE
     const PRICE_PER_KG = 650;
 
@@ -97,6 +104,42 @@ const App = () => {
             supabase.removeChannel(channel);
         };
     }, [fullName]);
+
+    // HANDLER FOR SENDING CONTACT MESSAGES (ONLY SAVES TO SUPABASE DATABASE)
+    const handleSendMessage = async (e) => {
+        e.preventDefault();
+        if (!msgName || !msgEmail || !msgText) {
+            alert("Please fill in all required message fields.");
+            return;
+        }
+
+        setIsSendingMsg(true);
+        try {
+            // Save directly to Supabase table (No EmailJS triggered)
+            const { error: dbError } = await supabase
+                .from('messages')
+                .insert([{
+                    sender_name: msgName,
+                    sender_email: msgEmail,
+                    subject: msgSubject,
+                    message: msgText,
+                    status: 'Unread'
+                }]);
+
+            if (dbError) throw dbError;
+
+            alert("Your message has been sent successfully! LPMPC Admin will review it in their dashboard.");
+            setMsgName('');
+            setMsgEmail('');
+            setMsgSubject('General Inquiry');
+            setMsgText('');
+        } catch (error) {
+            console.error('Error sending message:', error.message);
+            alert("Failed to send message: " + error.message);
+        } finally {
+            setIsSendingMsg(false);
+        }
+    };
 
     // HANDLERS
     const handlePlaceOrder = async () => {
@@ -240,7 +283,7 @@ const App = () => {
 
             if (profile.role === "admin") {
                 alert("Welcome, System Admin!");
-                navigate('/');
+                navigate('/admin');
             } else if (profile.role === "farmer") {
                 alert("Welcome, Partner Farmer!");
                 navigate('/farmer');
@@ -425,21 +468,34 @@ const App = () => {
                   <div className="col-lg-7 reveal reveal-up">
                       <div className="card border-0 shadow-sm p-4 h-100">
                           <h3 className="h4 mb-4">Send us a Message</h3>
-                          <form onSubmit={(e) => e.preventDefault()}>
+                          <form onSubmit={handleSendMessage}>
                               <div className="row g-3">
-                                  <div className="col-md-6"><label className="small fw-bold">Your Name</label><input type="text" className="form-control" /></div>
-                                  <div className="col-md-6"><label className="small fw-bold">Email Address</label><input type="email" className="form-control" /></div>
+                                  <div className="col-md-6">
+                                      <label className="small fw-bold">Your Name</label>
+                                      <input type="text" className="form-control" value={msgName} onChange={(e) => setMsgName(e.target.value)} required />
+                                  </div>
+                                  <div className="col-md-6">
+                                      <label className="small fw-bold">Email Address</label>
+                                      <input type="email" className="form-control" value={msgEmail} onChange={(e) => setMsgEmail(e.target.value)} required />
+                                  </div>
                                   <div className="col-12">
                                       <label className="small fw-bold">Subject</label>
-                                      <select className="form-select">
-                                          <option>General Inquiry</option>
-                                          <option>Product Order Inquiry</option>
-                                          <option>Farmer Partnership</option>
-                                          <option>Feedback</option>
-                                          </select>
+                                      <select className="form-select" value={msgSubject} onChange={(e) => setMsgSubject(e.target.value)}>
+                                          <option value="General Inquiry">General Inquiry</option>
+                                          <option value="Product Order Inquiry">Product Order Inquiry</option>
+                                          <option value="Farmer Partnership">Farmer Partnership</option>
+                                          <option value="Feedback">Feedback</option>
+                                      </select>
                                   </div>
-                                  <div className="col-12"><label className="small fw-bold">Message</label><textarea className="form-control" rows="5"></textarea></div>
-                                  <div className="col-12"><button type="submit" className="btn btn-custom-green w-100 py-3">Send Message</button></div>
+                                  <div className="col-12">
+                                      <label className="small fw-bold">Message</label>
+                                      <textarea className="form-control" rows="5" value={msgText} onChange={(e) => setMsgText(e.target.value)} required></textarea>
+                                  </div>
+                                  <div className="col-12">
+                                      <button type="submit" className="btn btn-custom-green w-100 py-3 fw-bold" disabled={isSendingMsg}>
+                                          {isSendingMsg ? <span className="spinner-border spinner-border-sm me-2"></span> : 'Send Message'}
+                                      </button>
+                                  </div>
                              </div>
                           </form>
                       </div>
