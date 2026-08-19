@@ -1,0 +1,390 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&family=Playfair+Display:wght@700&display=swap');
+
+:root {
+    --lpmpc-green: #468432;
+    --lpmpc-gold: #ffd700;
+    --lpmpc-light-yellow: #FFEF91;
+    --text-dark: #1e1e24;
+}
+
+/* --- BASE STYLES --- */
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    overflow-x: hidden;
+    font-family: 'Montserrat', sans-serif;
+    color: var(--text-dark);
+    background-color: #ffffff;
+}
+
+/* Specific body fallback for admin background if using layout wrapper */
+.admin-layout-wrapper {
+    background-color: #fcfcfc;
+    min-height: 100vh;
+}
+
+header {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    z-index: 1000;
+}
+
+main {
+    margin-top: 70px;
+    transition: all 0.3s ease;
+}
+section { padding: 80px 0; }
+h1, h2, h3, .navbar-brand { font-family: 'Playfair Display', serif; }
+
+/* --- REVEAL ANIMATIONS (Marketplace) --- */
+.reveal {
+    opacity: 0;
+    transition: all 1.2s cubic-bezier(0.17, 0.85, 0.438, 1);
+}
+.reveal-left { transform: translateX(-80px); }
+.reveal-right { transform: translateX(80px); }
+.reveal-up { transform: translateY(50px); }
+.reveal.active {
+    opacity: 1;
+    transform: translate(0, 0);
+}
+
+/* --- NAVBAR STYLES --- */
+.navbar {
+    background-color: var(--lpmpc-green) !important;
+    border-bottom: 4px solid var(--lpmpc-gold);
+    width: 100%;
+}
+.navbar-toggler { border-color: rgba(255, 255, 255, 0.5) !important; }
+.navbar-toggler-icon { filter: invert(1); }
+.nav-link { color: #ffffff !important; transition: 0.3s; }
+.nav-link:hover { color: var(--lpmpc-light-yellow) !important; }
+
+/* --- HOME & ABOUT SECTIONS --- */
+.home-section {
+    background-color: var(--lpmpc-light-yellow);
+    padding: 120px 0;
+    width: 100%;
+    margin: 0;
+    clip-path: ellipse(150% 100% at 50% 0%);
+    text-align: center;
+    position: relative;
+}
+#about { background-color: var(--lpmpc-light-yellow) !important; }
+
+/* --- CARD STYLES --- */
+.card {
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    border: 1px solid #eee !important;
+    border-radius: 15px;
+    overflow: hidden;
+}
+.card:hover {
+    transform: translateY(-12px);
+    box-shadow: 0 15px 30px rgba(0,0,0,0.1) !important;
+}
+
+/* --- MARKETPLACE UNIQUE BUTTONS & CARDS --- */
+.btn-custom-green {
+    background-color: var(--lpmpc-green);
+    color: white;
+    border-radius: 8px;
+    font-weight: bold;
+    padding: 12px;
+    border: none;
+}
+.btn-outline-login_signup {
+    color: white;
+    border: 2px solid var(--lpmpc-gold);
+    background: transparent;
+}
+.contact-info-card {
+    background: #fdfdfd;
+    border-left: 5px solid var(--lpmpc-green) !important;
+}
+.farmer-notice {
+    background-color: #f1f8ee;
+    border: 1px dashed var(--lpmpc-green);
+}
+footer {
+    background-color: var(--lpmpc-green);
+    color: white;
+    padding: 40px 0;
+}
+
+/* --- MODERN AUTH MODAL STYLES --- */
+.auth-modal-content {
+    border-radius: 20px;
+    overflow: hidden;
+    border: none;
+}
+.auth-side-panel {
+    background: linear-gradient(135deg, var(--lpmpc-green) 0%, #2d5a1e 100%);
+    color: white;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.form-floating > .form-control:focus {
+    border-color: var(--lpmpc-green);
+    box-shadow: 0 0 0 0.25rem rgba(70, 132, 50, 0.15);
+}
+.auth-toggle-btn {
+    color: var(--lpmpc-green);
+    text-decoration: none;
+    font-weight: 600;
+    transition: 0.2s;
+    cursor: pointer;
+}
+.auth-toggle-btn:hover { color: var(--lpmpc-gold); }
+.input-group-text {
+    background: transparent;
+    border-left: none;
+    cursor: pointer;
+}
+.password-input { border-right: none; }
+
+/* --- ADMIN LAYOUT CORE (Desktop Default) --- */
+.admin-tab-btn {
+    width: 100%;
+    background: none;
+    border: none;
+    color: white;
+    text-align: left;
+    padding: 15px 25px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-left: 4px solid transparent;
+    text-transform: uppercase;
+    outline: none !important;
+    box-shadow: none !important;
+    transition: 0.3s;
+    opacity: 0.7;
+}
+.admin-tab-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+}
+.admin-tab-btn.active {
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: var(--lpmpc-gold) !important;
+    border-left: 4px solid var(--lpmpc-gold);
+    opacity: 1;
+}
+
+/* Static rules for Admin layout to ensure performance & consistency */
+.admin-layout .card,
+.admin-layout .card:hover,
+.admin-layout .btn,
+.admin-layout .admin-tab-btn,
+.admin-layout .vis-item,
+.admin-layout .reveal {
+    transition: none !important;
+    transform: none !important;
+    animation: none !important;
+    opacity: 1 !important;
+    border-radius: 0 !important;
+}
+
+.admin-layout .card {
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Admin Dashboard Specific Data Table Controls */
+.action-icon-btn {
+    background: none;
+    border: none;
+    padding: 4px;
+    transition: opacity 0.2s;
+}
+.action-icon-btn:hover { opacity: 0.6; }
+.text-icon-green { color: #2e7d32 !important; }
+.text-icon-red { color: #d32f2f !important; }
+
+/* --- VISUALIZATION / TIMELINE --- */
+#visualization {
+    min-height: 450px !important;
+    height: auto !important;
+    border: 1px solid #ddd !important;
+    background: #fff;
+    overflow: hidden;
+}
+.vis-item { font-weight: 700 !important; border-radius: 0 !important; }
+
+/* Table Badge Colors */
+.bg-pink { background-color: #e83e8c !important; }
+
+/* Timeline Bar Colors (Dapat tumutugma sa table) */
+.bar-veg { background-color: #28a745 !important; }
+.bar-flow { background-color: #e83e8c !important; color: white !important; }
+.bar-maturation { background-color: #ffc107 !important; color: black !important; }
+.bar-harvest { background-color: #17a2b8 !important; }
+
+.vis-item.bar-veg { background-color: #28a745 !important; border-color: #28a745 !important; color: white !important; }
+.vis-item.bar-flow { background-color: #e83e8c !important; border-color: #e83e8c !important; color: white !important; }
+.vis-item.bar-maturation { background-color: #ffc107 !important; border-color: #ffc107 !important; color: black !important; }
+.vis-item.bar-harvest { background-color: #17a2b8 !important; border-color: #17a2b8 !important; color: white !important; }
+
+/* --- UNIVERSAL RESPONSIVE FIX --- */
+@media (min-width: 992px) {
+    main.offset-lg-2 {
+        margin-left: 16.666667% !important;
+        width: 83.333333% !important;
+    }
+}
+
+@media (max-width: 991.98px) {
+    /* Sapilitang gagawing top horizontal bar ang fixed vertical nav natin */
+    nav.bg-lpmpc-green.vh-100.position-fixed {
+        width: 100% !important;
+        height: 60px !important;
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 0 15px !important;
+        z-index: 2000 !important;
+        border-bottom: 3px solid var(--lpmpc-gold) !important;
+    }
+
+    nav .border-bottom {
+        padding: 0 !important;
+        border: none !important;
+        display: flex !important;
+        align-items: center !important;
+        width: auto !important;
+    }
+
+    nav .border-bottom h4 {
+        font-size: 1.1rem !important;
+        margin: 0 !important;
+        white-space: nowrap;
+    }
+
+    /* Gagawing pahiga ang buttons at papayagang ma-scroll pakanan kung kulang ang screen space */
+    nav .nav.flex-column {
+        flex-direction: row !important;
+        margin-top: 0 !important;
+        height: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 5px !important;
+        overflow-x: auto !important;
+        white-space: nowrap;
+    }
+
+    .admin-tab-btn {
+        padding: 10px 15px !important;
+        font-size: 0.75rem !important;
+        white-space: nowrap;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        border-left: none !important;
+    }
+
+    .admin-tab-btn.active {
+        background: transparent !important;
+        border-left: none !important;
+        position: relative;
+    }
+
+    /* Indicator line sa ilalim ng active text imbis na sa kaliwa */
+    .admin-tab-btn.active::after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background-color: var(--lpmpc-gold);
+    }
+}
+
+/* Extra small devices fix */
+@media (max-width: 360px) {
+    nav .p-4.border-bottom h4 { display: none !important; }
+}
+
+/* --- UTILITIES --- */
+.lpmpc-green { color: var(--lpmpc-green) !important; }
+.bg-lpmpc-green { background-color: var(--lpmpc-green) !important; }
+.text-gold { color: var(--lpmpc-gold) !important; }
+.pulse { animation: pulse-soft 2s infinite ease-in-out; }
+@keyframes pulse-soft {
+    0%, 100% { transform: scale(0.98); opacity: 0.8; }
+    50% { transform: scale(1); opacity: 1; }
+}
+
+/* --- FARMER PORTAL BATCH & TIMELINE OVERRIDES --- */
+.vis-timeline {
+    border: 1px solid #dee2e6 !important;
+    font-family: 'Montserrat', sans-serif !important;
+    background-color: #ffffff;
+}
+.vis-label {
+    border-bottom: 1px solid #dee2e6 !important;
+    font-weight: bold;
+    color: var(--text-dark);
+    background-color: #ffffff;
+}
+.vis-time-axis .vis-text {
+    color: #6c757d !important;
+    font-weight: 600 !important;
+    font-size: 11px !important;
+}
+
+/* Status Badges at Progress Bar system */
+.status-pill-flowering {
+    background-color: #FFC107 !important;
+    color: #212529 !important;
+    font-weight: 700;
+    border-radius: 4px !important;
+    padding: 4px 8px !important;
+    display: inline-block;
+    font-size: 12px;
+}
+.status-pill-vegetative {
+    background-color: #198754 !important;
+    color: #ffffff !important;
+    font-weight: 700;
+    border-radius: 4px !important;
+    padding: 4px 8px !important;
+    display: inline-block;
+    font-size: 12px;
+}
+.clean-solid-progress {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    border-radius: 8px !important;
+    color: #ffffff;
+    font-size: 14px;
+    height: 36px;
+    width: 120px;
+    text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.settings-icon-btn {
+    background: transparent;
+    border: none;
+    color: #ffffff;
+    font-size: 1.25rem;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+.settings-icon-btn:hover {
+    transform: rotate(30deg);
+    color: var(--lpmpc-gold);
+}
