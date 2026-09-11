@@ -182,7 +182,7 @@ const App = () => {
 
             if (itemsError) throw itemsError;
 
-            alert("Order successfully saved to Piña-QualiFi database!");
+            alert("Thank you for your order. Please wait for the confirmation!");
 
             const modalEl = document.getElementById('orderModal');
             if (modalEl) {
@@ -409,7 +409,7 @@ const App = () => {
                                         setWeightKg(1);
                                     }}
                                   >
-                                    {user ? 'Select Fiber Grade' : 'Order Now!'}
+                                    {user ? 'Buy Now!' : 'Order Now!'}
                                   </button>
                               </div>
                           </div>

@@ -157,24 +157,104 @@ const AdminDashboard = () => {
     };
 
     const fetchOrdersFromSupabase = async () => {
-        try {
-            setIsLoading(true);
-            const { data, error } = await supabase
-                .from('orders')
-                .select(`
-                    *,
-                    order_items (*)
-                `)
-                .order('created_at', { ascending: false });
+            try {
+                setIsLoading(true);
 
-            if (error) throw error;
-            setSupabaseOrders(data || []);
-        } catch (error) {
-            console.error('Error fetching orders:', error.message);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+                // 1. Kunin ang stock mula sa bastos_logs at alamin ang tamang timbang kada grade
+                const { data: bastosData } = await supabase.from('bastos_logs').select('*');
+                const liveGradeWeights = { 'PID-1': 0, 'PID-2': 0, 'PID-3': 0, 'PID-4': 0, 'PID-R': 0 };
+
+                if (bastosData) {
+                    bastosData.forEach((row) => {
+                        let rawGrade = row.grade ? row.grade.trim().toUpperCase() : '';
+                        let gradeKey = 'PID-R';
+                        if (rawGrade.includes('PID-1')) gradeKey = 'PID-1';
+                        else if (rawGrade.includes('PID-2')) gradeKey = 'PID-2';
+                        else if (rawGrade.includes('PID-3')) gradeKey = 'PID-3';
+                        else if (rawGrade.includes('PID-4')) gradeKey = 'PID-4';
+                        else if (rawGrade.includes('PID-R') || rawGrade.includes('RESIDUAL')) gradeKey = 'PID-R';
+
+                        const bundleWeight = Number(row.weight || row.fiber_weight) || 0.5;
+                        liveGradeWeights[gradeKey] += bundleWeight;
+                    });
+                }
+
+                console.log("DEBUG - Live Warehouse Stocks Calculated:", liveGradeWeights);
+
+                // 2. Kunin ang mga active farms para sa sourcing sakaling kulang
+                const { data: farmData } = await supabase.from('farm').select('*');
+                const activeFarms = farmData || [];
+
+                // 3. Kunin ang orders kasama ang order_items
+                const { data, error } = await supabase
+                    .from('orders')
+                    .select(`
+                        *,
+                        order_items (*)
+                    `)
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+
+                const fetchedOrders = data || [];
+
+                // --- AUTOMATED ORDER EVALUATION ENGINE ---
+                for (const order of fetchedOrders) {
+                    if (order.order_status === 'Pending') {
+                        const primaryItem = order.order_items?.[0] || {};
+
+                        // Sinisigurong binabasa ang fiber_type o item_name man yan
+                        let rawGrade = (primaryItem.fiber_type || primaryItem.item_name || 'PID-1').trim().toUpperCase();
+                        let orderedGrade = 'PID-R';
+
+                        if (rawGrade.includes('PID-1')) orderedGrade = 'PID-1';
+                        else if (rawGrade.includes('PID-2')) orderedGrade = 'PID-2';
+                        else if (rawGrade.includes('PID-3')) orderedGrade = 'PID-3';
+                        else if (rawGrade.includes('PID-4')) orderedGrade = 'PID-4';
+                        else if (rawGrade.includes('PID-R') || rawGrade.includes('RESIDUAL')) orderedGrade = 'PID-R';
+
+                        const orderedWeight = Number(primaryItem.fiber_weight || primaryItem.measurements?.weight_kg) || 1.0;
+                        const availableWarehouseKg = liveGradeWeights[orderedGrade] || 0;
+
+                        console.log(`DEBUG - Order ID: ${order.id} | Grade: ${orderedGrade} | Requested: ${orderedWeight}kg | Available Stock: ${availableWarehouseKg}kg`);
+
+                        let autoNewStatus = 'Pending';
+
+                        // Kung sapat ang stock sa warehouse, i-Confirm agad
+                        if (availableWarehouseKg >= orderedWeight) {
+                            autoNewStatus = 'Confirmed';
+                        } else {
+                            // Kung kulang, tingnan kung may farm na mag-aani
+                            const harvestableFarms = activeFarms.filter(f =>
+                                (f.status_name === 'Harvesting' || f.status_name === 'Maturation')
+                            );
+
+                            if (harvestableFarms.length > 0) {
+                                autoNewStatus = 'Pending Farmer Sourcing';
+                            } else {
+                                autoNewStatus = 'Rejected';
+                            }
+                        }
+
+                        // I-update sa database kung nagbago ang status mula Pending
+                        if (autoNewStatus !== 'Pending') {
+                            await supabase
+                                .from('orders')
+                                .update({ order_status: autoNewStatus })
+                                .eq('id', order.id);
+
+                            order.order_status = autoNewStatus;
+                        }
+                    }
+                }
+
+                setSupabaseOrders(fetchedOrders);
+            } catch (error) {
+                console.error('Error evaluating automated orders:', error.message);
+            } finally {
+                setIsLoading(false);
+            }
+        };
 
     const fetchFarmsFromSupabase = async () => {
         try {
@@ -278,68 +358,96 @@ const AdminDashboard = () => {
         }
     };
 
-    const updateTimelineData = (farmData, statusFilterVal, searchVal) => {
-        if (!groups.current || !items.current) return;
+// Function para suriin ang inventory at magbigay ng rekomendasyon sa sourcing
+const checkInventoryAndSourcingAlerts = () => {
+    const alerts = [];
 
-        groups.current.clear();
-        items.current.clear();
+    // Halimbawa: Kapag ang stock ay umabot sa 20kg pababa, low stock na
+    inventoryStock.forEach(item => {
+        if (item.stockKg < 20) {
+            // Hanapin ang mga farm na malapit nang i-harvest (Maturation o Harvesting)
+            const availableFarms = farms.filter(f =>
+                f.status_name === 'Maturation' || f.status_name === 'Harvesting'
+            );
 
-        const uniqueFarms = [];
-        const dynamicItems = [];
-
-        farmData.forEach((farm) => {
-            const batchMatch = (farm.batch_id || '').toLowerCase().includes((searchVal || '').toLowerCase());
-            const farmNameMatch = (farm.farm_name || '').toLowerCase().includes((searchVal || '').toLowerCase());
-            const matchesSearch = batchMatch || farmNameMatch;
-
-            const matchesDropdown = statusFilterVal === 'ALL' || (farm.status_name || '').toUpperCase() === statusFilterVal;
-
-            if (!matchesSearch || !matchesDropdown) return; // Laktawan kung hindi pasok sa filter
-
-            const groupId = String(farm.id);
-            const itemId = `item_${farm.id}`;
-
-            uniqueFarms.push({
-                id: groupId,
-                content: `${farm.batch_id} (${farm.farm_name})`
+            alerts.push({
+                grade: item.id,
+                stock: item.stockKg,
+                suggestedFarms: availableFarms
             });
-
-            const phaseName = farm.status_name || 'Vegetative';
-            const statusKey = phaseName.toLowerCase();
-
-            const timelineClasses = {
-                vegetative: 'bar-veg',
-                flowering: 'bar-flow',
-                maturation: 'bar-maturation',
-                harvesting: 'bar-harvest',
-                harvested: 'bar-harvested'
-            };
-
-            dynamicItems.push({
-                id: itemId,
-                group: groupId,
-                content: phaseName,
-                start: farm.start_date,
-                end: farm.end_date,
-                className: timelineClasses[statusKey] || 'bar-veg'
-            });
-        });
-
-        groups.current.add(uniqueFarms);
-        items.current.add(dynamicItems);
-
-        if (timelineRef.current) {
-            timelineRef.current.setGroups(groups.current);
-            timelineRef.current.setItems(items.current);
-            timelineRef.current.redraw();
-
-            setTimeout(() => {
-                if (timelineRef.current && uniqueFarms.length > 0) {
-                    timelineRef.current.fit({ animation: false });
-                }
-            }, 50);
         }
-    };
+    });
+
+    return alerts;
+};
+
+   const updateTimelineData = (farmData, statusFilterVal, searchVal) => {
+       if (!groups.current || !items.current) return;
+
+       groups.current.clear();
+       items.current.clear();
+
+       const uniqueFarms = [];
+       const dynamicItems = [];
+
+       farmData.forEach((farm) => {
+           const batchMatch = (farm.batch_id || '').toLowerCase().includes((searchVal || '').toLowerCase());
+           const farmNameMatch = (farm.farm_name || '').toLowerCase().includes((searchVal || '').toLowerCase());
+           const matchesSearch = batchMatch || farmNameMatch;
+
+           const matchesDropdown = statusFilterVal === 'ALL' || (farm.status_name || '').toUpperCase() === statusFilterVal;
+
+           if (!matchesSearch || !matchesDropdown) return;
+
+           const groupId = String(farm.id);
+           const itemId = `item_${farm.id}`;
+
+           uniqueFarms.push({
+               id: groupId,
+               content: `${farm.batch_id} (${farm.farm_name})`
+           });
+
+           const phaseName = farm.status_name || 'Vegetative';
+           const statusKey = phaseName.toLowerCase();
+
+           const timelineClasses = {
+               vegetative: 'bar-veg',
+               flowering: 'bar-flow',
+               maturation: 'bar-maturation',
+               harvesting: 'bar-harvest',
+               harvested: 'bar-harvested'
+           };
+
+           dynamicItems.push({
+               id: itemId,
+               group: groupId,
+               content: phaseName,
+               start: farm.start_date,
+               end: farm.end_date,
+               className: timelineClasses[statusKey] || 'bar-veg'
+           });
+       });
+
+       groups.current.add(uniqueFarms);
+       items.current.add(dynamicItems);
+
+       if (timelineRef.current) {
+           timelineRef.current.setGroups(groups.current);
+           timelineRef.current.setItems(items.current);
+           timelineRef.current.redraw();
+
+           setTimeout(() => {
+               if (timelineRef.current && uniqueFarms.length > 0) {
+                   timelineRef.current.fit({ animation: false });
+               }
+           }, 50);
+       }
+   };
+
+   // Idagdag din ito sa ibaba ng function para mag-auto update ang timeline kapag nag-filter ka
+   useEffect(() => {
+       updateTimelineData(farms, farmStatusFilter, searchQuery);
+   }, [farmStatusFilter, searchQuery, farms]);
 
     useEffect(() => {
         updateTimelineData(farms, farmStatusFilter, searchQuery);
@@ -963,6 +1071,8 @@ const AdminDashboard = () => {
                                     </button>
                                 </div>
 
+
+
                                 <div className="table-responsive">
                                     <table className="table table-hover align-middle mb-0" style={{ fontSize: '0.85rem' }}>
                                         <thead className="bg-light text-muted small text-uppercase">
@@ -1005,6 +1115,51 @@ const AdminDashboard = () => {
                                             )}
                                         </tbody>
                                     </table>
+                                </div>
+                            </div>
+
+                            {/* SMART INVENTORY & FARM SOURCING RECOMMENDATIONS WIDGET */}
+                            <div className="card border-0 shadow-sm rounded-4 p-4 bg-white mb-4 border-start border-4 border-warning">
+                                <div className="d-flex align-items-center mb-3">
+                                    <span className="material-symbols-outlined text-warning me-2" style={{ fontSize: '1.8rem' }}>notification_important</span>
+                                    <div>
+                                        <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.9rem' }}>Inventory & Farm Sourcing Recommendations</h6>
+                                        <small className="text-muted" style={{ fontSize: '0.75rem' }}>Automated advisory based on warehouse stock levels and upcoming farm harvests</small>
+                                    </div>
+                                </div>
+
+                                <div className="vstack gap-2">
+                                    {inventoryStock.filter(i => i.stockKg < 20).length > 0 ? (
+                                        inventoryStock.filter(i => i.stockKg < 20).map((lowItem, idx) => {
+                                            const prospectFarms = farms.filter(f => f.status_name === 'Maturation' || f.status_name === 'Harvesting');
+
+                                            return (
+                                                <div key={idx} className="p-3 bg-light rounded-3 border d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+                                                    <div>
+                                                        <span className="badge bg-danger me-2">LOW STOCK: {lowItem.id}</span>
+                                                        <span className="fw-bold text-dark">Current Stock: {lowItem.stockKg.toFixed(1)} kg</span>
+                                                        <p className="text-muted small m-0 mt-1">
+                                                            {prospectFarms.length > 0 ? (
+                                                                <span>Suggested Sourcing Farm(s): <strong>{prospectFarms.map(f => `${f.farm_name} (${f.batch_id} - ${f.status_name})`).join(', ')}</strong></span>
+                                                            ) : (
+                                                                <span className="text-danger">Warning: No prospect farms currently in Maturation or Harvesting stage!</span>
+                                                            )}
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        className="btn btn-sm btn-outline-success fw-bold text-uppercase rounded-pill px-3"
+                                                        onClick={() => setActiveTab('v-farm')}
+                                                    >
+                                                        View Farm Timeline
+                                                    </button>
+                                                </div>
+                                            );
+                                        })
+                                    ) : (
+                                        <div className="text-success small fw-bold py-2">
+                                            ✔ All fiber inventory grades (PID-1 to PID-R) are at optimal stock levels. No sourcing alerts at this time.
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -1089,7 +1244,7 @@ const AdminDashboard = () => {
                                                 <th>Owner / Contact</th>
                                                 <th>Status</th>
                                                 <th style={{ width: '150px' }}>Progress</th>
-                                                <th>Harvest Details</th> {/* Bagong Kolum */}
+                                                <th>Harvest Details</th>
                                             </tr>
                                         </thead>
                                         <tbody>
