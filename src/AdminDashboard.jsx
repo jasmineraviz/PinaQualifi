@@ -14,6 +14,9 @@ const supabaseUrl = 'https://bqblzvgwkvdkanobntgn.supabase.co';
 const supabaseKey = 'sb_publishable_cKKlFv0eCaArfywT-fqzaQ_QEXrLLbm';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+const DEFAULT_FIBER_GRAMS = 500;
+const DEFAULT_FIBER_KG = DEFAULT_FIBER_GRAMS / 1000;
+
 const AdminDashboard = () => {
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('v-dash');
@@ -36,26 +39,6 @@ const AdminDashboard = () => {
     const [selectedMsg, setSelectedMsg] = useState(null);
     const [showInboxModal, setShowInboxModal] = useState(false);
 
-    // LOGOUT HANDLER
-    const handleSignOut = async () => {
-        if (window.confirm("Are you sure you want to log out of the Admin Portal?")) {
-            try {
-                await supabase.auth.signOut();
-
-                localStorage.clear();
-                sessionStorage.clear();
-
-                window.close();
-
-                navigate('/admin-login', { replace: true });
-
-            } catch (error) {
-                console.error("Logout Error:", error.message);
-                alert("Failed to log out cleanly.");
-            }
-        }
-    };
-
     // REFS FOR LIBRARIES
     const timelineRef = useRef(null);
     const chartRef = useRef(null);
@@ -63,6 +46,9 @@ const AdminDashboard = () => {
     const chartCanvas = useRef(null);
     const salesChartCanvas = useRef(null);
     const salesChartRef = useRef(null);
+    const mapRef = useRef(null);
+    const markerRef = useRef(null);
+    const geocoderInstanceRef = useRef(null);
 
     // REACTIVE VIS-TIMELINE DATA SETS
     const groups = useRef(new DataSet([]));
@@ -71,6 +57,57 @@ const AdminDashboard = () => {
     // STATE MANAGEMENT
     const [selectedBatch, setSelectedBatch] = useState(null);
     const [selectedOrder, setSelectedOrder] = useState(null);
+    const [supabaseOrders, setSupabaseOrders] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+
+    // DYNAMIC FILTER ENGINE
+    const cardPendingOrders = supabaseOrders.filter(
+        (o) => o.order_status === 'Pending' || o.order_status === 'Pending Farmer Sourcing'
+    );
+    const tableQueueOrders = supabaseOrders.filter(
+        (o) =>
+            o.order_status !== 'Pending' &&
+            o.order_status !== 'Pending Farmer Sourcing' &&
+            o.order_status !== 'Rejected' &&
+            o.order_status !== 'Cancelled'
+    );
+    const paidOrders = supabaseOrders.filter((o) => o.order_status === 'Received');
+    const unpaidOrders = supabaseOrders.filter(
+        (o) => o.order_status !== 'Received' && o.order_status !== 'Rejected' && o.order_status !== 'Cancelled'
+    );
+
+    const totalPaidAmount = paidOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+    const totalUnpaidAmount = unpaidOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+    const totalSalesOrdersCount = supabaseOrders.filter(
+        (o) => o.order_status !== 'Cancelled' && o.order_status !== 'Rejected'
+    ).length;
+
+    // LIVE WIDGETS COUNTER MATRIX
+    const pendingCount = cardPendingOrders.length;
+    const productionCount = supabaseOrders.filter(
+        (o) => o.order_status === 'Processing' || o.order_status === 'Confirmed'
+    ).length;
+    const completedCount = supabaseOrders.filter(
+        (o) => o.order_status === 'Received' || o.order_status === 'In Transit'
+    ).length;
+
+    const unreadMsgCount = messages.filter((m) => m.status === 'Unread').length;
+
+    // LOGOUT HANDLER
+    const handleSignOut = async () => {
+        if (window.confirm('Are you sure you want to log out of the Admin Portal?')) {
+            try {
+                await supabase.auth.signOut();
+                localStorage.clear();
+                sessionStorage.clear();
+                window.close();
+                navigate('/admin-login', { replace: true });
+            } catch (error) {
+                console.error('Logout Error:', error.message);
+                alert('Failed to log out cleanly.');
+            }
+        }
+    };
 
     const handleViewDetails = (e, orderData) => {
         if (e) {
@@ -88,42 +125,14 @@ const AdminDashboard = () => {
                     const modalInstance = bootstrapObj.Modal.getOrCreateInstance(modalElement);
                     modalInstance.show();
                 } else {
-                    console.error("Bootstrap JS library is not loaded globally.");
+                    console.error('Bootstrap JS library is not loaded globally.');
                 }
             } catch (err) {
-                console.error("Modal transition fault:", err.message);
+                console.error('Modal transition fault:', err.message);
             }
         }
     };
 
-    // SUPABASE STATE MANAGEMENT
-    const [supabaseOrders, setSupabaseOrders] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
-
-    // DYNAMIC FILTER ENGINE
-    const cardPendingOrders = supabaseOrders.filter(o => o.order_status === 'Pending' || o.order_status === 'Pending Farmer Sourcing');
-    const tableQueueOrders = supabaseOrders.filter(o =>
-        o.order_status !== 'Pending' &&
-        o.order_status !== 'Pending Farmer Sourcing' &&
-        o.order_status !== 'Rejected' &&
-        o.order_status !== 'Cancelled'
-    );
-    const paidOrders = supabaseOrders.filter(o => o.order_status === 'Received');
-    const unpaidOrders = supabaseOrders.filter(o =>
-        o.order_status !== 'Received' &&
-        o.order_status !== 'Rejected' &&
-        o.order_status !== 'Cancelled'
-    );
-    const totalPaidAmount = paidOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
-    const totalUnpaidAmount = unpaidOrders.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
-    const totalSalesOrdersCount = supabaseOrders.filter(o => o.order_status !== 'Cancelled' && o.order_status !== 'Rejected').length;
-
-    // LIVE WIDGETS COUNTER MATRIX
-    const pendingCount = cardPendingOrders.length;
-    const productionCount = supabaseOrders.filter(o => o.order_status === 'Processing' || o.order_status === 'Confirmed').length;
-    const completedCount = supabaseOrders.filter(o => o.order_status === 'Received' || o.order_status === 'In Transit').length;
-
-    // FETCHES MESSAGES FROM SUPABASE
     const fetchMessagesFromSupabase = async () => {
         try {
             setIsMessagesLoading(true);
@@ -145,116 +154,114 @@ const AdminDashboard = () => {
         setSelectedMsg(msg);
         if (msg.status === 'Unread') {
             try {
-                await supabase
-                    .from('messages')
-                    .update({ status: 'Read' })
-                    .eq('id', msg.id);
+                await supabase.from('messages').update({ status: 'Read' }).eq('id', msg.id);
                 fetchMessagesFromSupabase();
             } catch (err) {
-                console.error("Error updating message status:", err);
+                console.error('Error updating message status:', err);
             }
         }
     };
 
     const fetchOrdersFromSupabase = async () => {
-            try {
-                setIsLoading(true);
+        try {
+            setIsLoading(true);
 
-                // 1. Kunin ang stock mula sa bastos_logs at alamin ang tamang timbang kada grade
-                const { data: bastosData } = await supabase.from('bastos_logs').select('*');
-                const liveGradeWeights = { 'PID-1': 0, 'PID-2': 0, 'PID-3': 0, 'PID-4': 0, 'PID-R': 0 };
+            // 1. Kunin ang stock mula sa bastos_logs at alamin ang tamang timbang kada grade
+            const { data: bastosData } = await supabase.from('bastos_logs').select('*');
+            const liveGradeWeights = { 'PID-1': 0, 'PID-2': 0, 'PID-3': 0, 'PID-4': 0, 'PID-R': 0 };
 
-                if (bastosData) {
-                    bastosData.forEach((row) => {
-                        let rawGrade = row.grade ? row.grade.trim().toUpperCase() : '';
-                        let gradeKey = 'PID-R';
-                        if (rawGrade.includes('PID-1')) gradeKey = 'PID-1';
-                        else if (rawGrade.includes('PID-2')) gradeKey = 'PID-2';
-                        else if (rawGrade.includes('PID-3')) gradeKey = 'PID-3';
-                        else if (rawGrade.includes('PID-4')) gradeKey = 'PID-4';
-                        else if (rawGrade.includes('PID-R') || rawGrade.includes('RESIDUAL')) gradeKey = 'PID-R';
+            if (bastosData) {
+                bastosData.forEach((row) => {
+                    let rawGrade = row.grade ? row.grade.trim().toUpperCase() : '';
+                    let gradeKey = 'PID-R';
+                    if (rawGrade.includes('PID-1')) gradeKey = 'PID-1';
+                    else if (rawGrade.includes('PID-2')) gradeKey = 'PID-2';
+                    else if (rawGrade.includes('PID-3')) gradeKey = 'PID-3';
+                    else if (rawGrade.includes('PID-4')) gradeKey = 'PID-4';
+                    else if (rawGrade.includes('PID-R') || rawGrade.includes('RESIDUAL')) gradeKey = 'PID-R';
 
-                        const bundleWeight = Number(row.weight || row.fiber_weight) || 0.5;
-                        liveGradeWeights[gradeKey] += bundleWeight;
-                    });
-                }
+                    let bundleWeightKg = DEFAULT_FIBER_KG;
+                    const rawWeight = Number(row.weight || row.fiber_weight || row.weight_grams);
+                    if (Number.isFinite(rawWeight) && rawWeight > 0) {
+                        bundleWeightKg = rawWeight >= 10 ? rawWeight / 1000 : rawWeight;
+                    }
 
-                console.log("DEBUG - Live Warehouse Stocks Calculated:", liveGradeWeights);
+                    liveGradeWeights[gradeKey] += bundleWeightKg;
+                });
+            }
 
-                // 2. Kunin ang mga active farms para sa sourcing sakaling kulang
-                const { data: farmData } = await supabase.from('farm').select('*');
-                const activeFarms = farmData || [];
+            console.log('DEBUG - Live Warehouse Stocks Calculated:', liveGradeWeights);
 
-                // 3. Kunin ang orders kasama ang order_items
-                const { data, error } = await supabase
-                    .from('orders')
-                    .select(`
-                        *,
-                        order_items (*)
-                    `)
-                    .order('created_at', { ascending: false });
+            // 2. Kunin ang mga active farms para sa sourcing sakaling kulang
+            const { data: farmData } = await supabase.from('farm').select('*');
+            const activeFarms = farmData || [];
 
-                if (error) throw error;
+            // 3. Kunin ang orders kasama ang order_items
+            const { data, error } = await supabase
+                .from('orders')
+                .select(`*, order_items (*)`)
+                .order('created_at', { ascending: false });
 
-                const fetchedOrders = data || [];
+            if (error) throw error;
 
-                // --- AUTOMATED ORDER EVALUATION ENGINE ---
-                for (const order of fetchedOrders) {
-                    if (order.order_status === 'Pending') {
-                        const primaryItem = order.order_items?.[0] || {};
+            const fetchedOrders = data || [];
 
-                        // Sinisigurong binabasa ang fiber_type o item_name man yan
-                        let rawGrade = (primaryItem.fiber_type || primaryItem.item_name || 'PID-1').trim().toUpperCase();
-                        let orderedGrade = 'PID-R';
+            // AUTOMATED ORDER EVALUATION ENGINE
+            for (const order of fetchedOrders) {
+                if (order.order_status === 'Pending') {
+                    const primaryItem = order.order_items?.[0] || {};
 
-                        if (rawGrade.includes('PID-1')) orderedGrade = 'PID-1';
-                        else if (rawGrade.includes('PID-2')) orderedGrade = 'PID-2';
-                        else if (rawGrade.includes('PID-3')) orderedGrade = 'PID-3';
-                        else if (rawGrade.includes('PID-4')) orderedGrade = 'PID-4';
-                        else if (rawGrade.includes('PID-R') || rawGrade.includes('RESIDUAL')) orderedGrade = 'PID-R';
+                    let rawGrade = (primaryItem.fiber_type || primaryItem.item_name || 'PID-1').trim().toUpperCase();
+                    let orderedGrade = 'PID-R';
 
-                        const orderedWeight = Number(primaryItem.fiber_weight || primaryItem.measurements?.weight_kg) || 1.0;
-                        const availableWarehouseKg = liveGradeWeights[orderedGrade] || 0;
+                    if (rawGrade.includes('PID-1')) orderedGrade = 'PID-1';
+                    else if (rawGrade.includes('PID-2')) orderedGrade = 'PID-2';
+                    else if (rawGrade.includes('PID-3')) orderedGrade = 'PID-3';
+                    else if (rawGrade.includes('PID-4')) orderedGrade = 'PID-4';
+                    else if (rawGrade.includes('PID-R') || rawGrade.includes('RESIDUAL')) orderedGrade = 'PID-R';
 
-                        console.log(`DEBUG - Order ID: ${order.id} | Grade: ${orderedGrade} | Requested: ${orderedWeight}kg | Available Stock: ${availableWarehouseKg}kg`);
+                    const orderedWeight =
+                        Number(primaryItem.fiber_weight || primaryItem.measurements?.weight_kg) || 1.0;
+                    const availableWarehouseKg = liveGradeWeights[orderedGrade] || 0;
 
-                        let autoNewStatus = 'Pending';
+                    console.log(
+                        `DEBUG - Order ID: ${order.id} | Grade: ${orderedGrade} | Requested: ${orderedWeight}kg | Available Stock: ${availableWarehouseKg}kg`
+                    );
 
-                        // Kung sapat ang stock sa warehouse, i-Confirm agad
-                        if (availableWarehouseKg >= orderedWeight) {
-                            autoNewStatus = 'Confirmed';
+                    let autoNewStatus = 'Pending';
+
+                    if (availableWarehouseKg >= orderedWeight) {
+                        autoNewStatus = 'Confirmed';
+                    } else {
+                        const harvestableFarms = activeFarms.filter(
+                            (f) => f.status_name === 'Harvesting' || f.status_name === 'Maturation'
+                        );
+
+                        if (harvestableFarms.length > 0) {
+                            autoNewStatus = 'Pending Farmer Sourcing';
                         } else {
-                            // Kung kulang, tingnan kung may farm na mag-aani
-                            const harvestableFarms = activeFarms.filter(f =>
-                                (f.status_name === 'Harvesting' || f.status_name === 'Maturation')
-                            );
-
-                            if (harvestableFarms.length > 0) {
-                                autoNewStatus = 'Pending Farmer Sourcing';
-                            } else {
-                                autoNewStatus = 'Rejected';
-                            }
-                        }
-
-                        // I-update sa database kung nagbago ang status mula Pending
-                        if (autoNewStatus !== 'Pending') {
-                            await supabase
-                                .from('orders')
-                                .update({ order_status: autoNewStatus })
-                                .eq('id', order.id);
-
-                            order.order_status = autoNewStatus;
+                            autoNewStatus = 'Rejected';
                         }
                     }
-                }
 
-                setSupabaseOrders(fetchedOrders);
-            } catch (error) {
-                console.error('Error evaluating automated orders:', error.message);
-            } finally {
-                setIsLoading(false);
+                    if (autoNewStatus !== 'Pending') {
+                        await supabase
+                            .from('orders')
+                            .update({ order_status: autoNewStatus })
+                            .eq('id', order.id);
+
+                        order.order_status = autoNewStatus;
+                    }
+                }
             }
-        };
+
+            setSupabaseOrders(fetchedOrders);
+        } catch (error) {
+            console.error('Error evaluating automated orders:', error.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const fetchFarmsFromSupabase = async () => {
         try {
@@ -266,7 +273,7 @@ const AdminDashboard = () => {
 
             if (error) throw error;
             setFarms(data || []);
-            updateTimelineData(data || []);
+            updateTimelineData(data || [], farmStatusFilter, searchQuery);
         } catch (error) {
             console.error('Error fetching farm database data:', error.message);
         } finally {
@@ -303,8 +310,13 @@ const AdminDashboard = () => {
                     else if (rawGrade.includes('PID-4')) gradeKey = 'PID-4';
                     else if (rawGrade.includes('PID-R') || rawGrade.includes('RESIDUAL')) gradeKey = 'PID-R';
 
-                    const bundleWeight = Number(row.weight || row.fiber_weight) || 0.5;
-                    gradeWeights[gradeKey] += bundleWeight;
+                    let bundleWeightKg = DEFAULT_FIBER_KG;
+                    const rawWeight = Number(row.weight || row.fiber_weight || row.weight_grams);
+                    if (Number.isFinite(rawWeight) && rawWeight > 0) {
+                        bundleWeightKg = rawWeight >= 10 ? rawWeight / 1000 : rawWeight;
+                    }
+
+                    gradeWeights[gradeKey] += bundleWeightKg;
                 });
 
                 const gradeMetadata = [
@@ -315,7 +327,7 @@ const AdminDashboard = () => {
                     { id: 'PID-R', name: 'PID-R' }
                 ];
 
-                const dynamicStockLedger = gradeMetadata.map(item => {
+                const dynamicStockLedger = gradeMetadata.map((item) => {
                     const weightKg = gradeWeights[item.id] || 0;
                     let status = 'Optimal';
                     if (weightKg === 0) status = 'Out of Stock';
@@ -327,14 +339,23 @@ const AdminDashboard = () => {
                         stockKg: weightKg,
                         price: '₱650.00 / kg',
                         status: status,
-                        score: item.id === 'PID-1' ? '95/100' : item.id === 'PID-2' ? '88/100' : item.id === 'PID-3' ? '80/100' : item.id === 'PID-4' ? '75/100' : '70/100'
+                        score:
+                            item.id === 'PID-1'
+                                ? '95/100'
+                                : item.id === 'PID-2'
+                                ? '88/100'
+                                : item.id === 'PID-3'
+                                ? '80/100'
+                                : item.id === 'PID-4'
+                                ? '75/100'
+                                : '70/100'
                     };
                 });
 
                 setInventoryStock(dynamicStockLedger);
 
                 const labels = ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'];
-                const values = labels.map(g => gradeWeights[g] || 0);
+                const values = labels.map((g) => gradeWeights[g] || 0);
                 setBastosChartData({ labels, values });
 
                 const recentLogs = data.slice(0, 5).map((log, idx) => {
@@ -346,7 +367,9 @@ const AdminDashboard = () => {
                         id: log.batch_id || `BAT-2026-${String(log.id || idx + 1).padStart(3, '0')}`,
                         grade: cleanGrade,
                         score: log.score ? `${log.score}/100` : '92/100',
-                        timestamp: log.created_at ? new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'
+                        timestamp: log.created_at
+                            ? new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                            : 'Live'
                     };
                 });
                 setRecentScannedBatches(recentLogs);
@@ -358,125 +381,97 @@ const AdminDashboard = () => {
         }
     };
 
-// Function para suriin ang inventory at magbigay ng rekomendasyon sa sourcing
-const checkInventoryAndSourcingAlerts = () => {
-    const alerts = [];
+    const updateTimelineData = (farmData, statusFilterVal, searchVal) => {
+        if (!groups.current || !items.current) return;
 
-    // Halimbawa: Kapag ang stock ay umabot sa 20kg pababa, low stock na
-    inventoryStock.forEach(item => {
-        if (item.stockKg < 20) {
-            // Hanapin ang mga farm na malapit nang i-harvest (Maturation o Harvesting)
-            const availableFarms = farms.filter(f =>
-                f.status_name === 'Maturation' || f.status_name === 'Harvesting'
-            );
+        groups.current.clear();
+        items.current.clear();
 
-            alerts.push({
-                grade: item.id,
-                stock: item.stockKg,
-                suggestedFarms: availableFarms
+        const uniqueFarms = [];
+        const dynamicItems = [];
+
+        farmData.forEach((farm) => {
+            const batchMatch = (farm.batch_id || '').toLowerCase().includes((searchVal || '').toLowerCase());
+            const farmNameMatch = (farm.farm_name || '').toLowerCase().includes((searchVal || '').toLowerCase());
+            const matchesSearch = batchMatch || farmNameMatch;
+
+            const matchesDropdown =
+                statusFilterVal === 'ALL' || (farm.status_name || '').toUpperCase() === statusFilterVal;
+
+            if (!matchesSearch || !matchesDropdown) return;
+
+            const groupId = String(farm.id);
+            const itemId = `item_${farm.id}`;
+
+            uniqueFarms.push({
+                id: groupId,
+                content: `${farm.batch_id} (${farm.farm_name})`
             });
+
+            const phaseName = farm.status_name || 'Vegetative';
+            const statusKey = phaseName.toLowerCase();
+
+            const timelineClasses = {
+                vegetative: 'bar-veg',
+                flowering: 'bar-flow',
+                maturation: 'bar-maturation',
+                harvesting: 'bar-harvest',
+                harvested: 'bar-harvested'
+            };
+
+            dynamicItems.push({
+                id: itemId,
+                group: groupId,
+                content: phaseName,
+                start: farm.start_date,
+                end: farm.end_date,
+                className: timelineClasses[statusKey] || 'bar-veg'
+            });
+        });
+
+        groups.current.add(uniqueFarms);
+        items.current.add(dynamicItems);
+
+        if (timelineRef.current) {
+            timelineRef.current.setGroups(groups.current);
+            timelineRef.current.setItems(items.current);
+            timelineRef.current.redraw();
+
+            setTimeout(() => {
+                if (timelineRef.current && uniqueFarms.length > 0) {
+                    timelineRef.current.fit({ animation: false });
+                }
+            }, 50);
         }
-    });
-
-    return alerts;
-};
-
-   const updateTimelineData = (farmData, statusFilterVal, searchVal) => {
-       if (!groups.current || !items.current) return;
-
-       groups.current.clear();
-       items.current.clear();
-
-       const uniqueFarms = [];
-       const dynamicItems = [];
-
-       farmData.forEach((farm) => {
-           const batchMatch = (farm.batch_id || '').toLowerCase().includes((searchVal || '').toLowerCase());
-           const farmNameMatch = (farm.farm_name || '').toLowerCase().includes((searchVal || '').toLowerCase());
-           const matchesSearch = batchMatch || farmNameMatch;
-
-           const matchesDropdown = statusFilterVal === 'ALL' || (farm.status_name || '').toUpperCase() === statusFilterVal;
-
-           if (!matchesSearch || !matchesDropdown) return;
-
-           const groupId = String(farm.id);
-           const itemId = `item_${farm.id}`;
-
-           uniqueFarms.push({
-               id: groupId,
-               content: `${farm.batch_id} (${farm.farm_name})`
-           });
-
-           const phaseName = farm.status_name || 'Vegetative';
-           const statusKey = phaseName.toLowerCase();
-
-           const timelineClasses = {
-               vegetative: 'bar-veg',
-               flowering: 'bar-flow',
-               maturation: 'bar-maturation',
-               harvesting: 'bar-harvest',
-               harvested: 'bar-harvested'
-           };
-
-           dynamicItems.push({
-               id: itemId,
-               group: groupId,
-               content: phaseName,
-               start: farm.start_date,
-               end: farm.end_date,
-               className: timelineClasses[statusKey] || 'bar-veg'
-           });
-       });
-
-       groups.current.add(uniqueFarms);
-       items.current.add(dynamicItems);
-
-       if (timelineRef.current) {
-           timelineRef.current.setGroups(groups.current);
-           timelineRef.current.setItems(items.current);
-           timelineRef.current.redraw();
-
-           setTimeout(() => {
-               if (timelineRef.current && uniqueFarms.length > 0) {
-                   timelineRef.current.fit({ animation: false });
-               }
-           }, 50);
-       }
-   };
-
-   // Idagdag din ito sa ibaba ng function para mag-auto update ang timeline kapag nag-filter ka
-   useEffect(() => {
-       updateTimelineData(farms, farmStatusFilter, searchQuery);
-   }, [farmStatusFilter, searchQuery, farms]);
+    };
 
     useEffect(() => {
         updateTimelineData(farms, farmStatusFilter, searchQuery);
     }, [farmStatusFilter, searchQuery, farms]);
 
     useEffect(() => {
-
         const checkAdminAuth = async () => {
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) {
-                    navigate('/admin-login', { replace: true });
-                    return;
-                }
+            const {
+                data: { session }
+            } = await supabase.auth.getSession();
+            if (!session) {
+                navigate('/admin-login', { replace: true });
+                return;
+            }
 
-                // Tiyaking role === admin talaga
-                const { data: profile } = await supabase
-                    .from('users')
-                    .select('role')
-                    .eq('id', session.user.id)
-                    .single();
+            const { data: profile } = await supabase
+                .from('users')
+                .select('role')
+                .eq('id', session.user.id)
+                .single();
 
-                if (!profile || profile.role !== 'admin') {
-                    await supabase.auth.signOut();
-                    navigate('/admin-login', { replace: true });
-                }
-            };
+            if (!profile || profile.role !== 'admin') {
+                await supabase.auth.signOut();
+                navigate('/admin-login', { replace: true });
+            }
+        };
 
-            checkAdminAuth();
-
+        checkAdminAuth();
         fetchOrdersFromSupabase();
         fetchBastosInventory();
         fetchFarmsFromSupabase();
@@ -484,11 +479,9 @@ const checkInventoryAndSourcingAlerts = () => {
 
         const channel = supabase
             .channel('admin-orders-sync')
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'orders' },
-                () => { fetchOrdersFromSupabase(); }
-            )
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+                fetchOrdersFromSupabase();
+            })
             .subscribe();
 
         const bastosChannel = supabase
@@ -500,20 +493,16 @@ const checkInventoryAndSourcingAlerts = () => {
 
         const farmChannel = supabase
             .channel('admin-farm-sync')
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'farm' },
-                () => { fetchFarmsFromSupabase(); }
-            )
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'farm' }, () => {
+                fetchFarmsFromSupabase();
+            })
             .subscribe();
 
         const messageChannel = supabase
             .channel('admin-message-sync')
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'messages' },
-                () => { fetchMessagesFromSupabase(); }
-            )
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
+                fetchMessagesFromSupabase();
+            })
             .subscribe();
 
         const modalElement = document.getElementById('orderDetailModal');
@@ -542,25 +531,20 @@ const checkInventoryAndSourcingAlerts = () => {
         if (orderedGrade.includes('PID-R') || orderedGrade.includes('RESIDUAL')) orderedGrade = 'PID-R';
 
         const orderedWeight = Number(primaryItem.fiber_weight) || 1.0;
-
-        const targetStock = inventoryStock.find(item => item.id === orderedGrade);
+        const targetStock = inventoryStock.find((item) => item.id === orderedGrade);
         const availableWarehouseKg = targetStock ? targetStock.stockKg : 0;
 
         if (availableWarehouseKg >= orderedWeight) {
             try {
-                const { error } = await supabase
-                    .from('orders')
-                    .update({ order_status: 'Confirmed' })
-                    .eq('id', order.id);
-
+                const { error } = await supabase.from('orders').update({ order_status: 'Confirmed' }).eq('id', order.id);
                 if (error) throw error;
                 alert(`Order APPROVED! Warehouse stock allocated (${availableWarehouseKg} kg available).`);
             } catch (error) {
-                alert("Error approving order: " + error.message);
+                alert('Error approving order: ' + error.message);
             }
         } else {
-            const availableFarms = farms.filter(f =>
-                (f.status_name === 'Harvesting' || f.status_name === 'Maturation')
+            const availableFarms = farms.filter(
+                (f) => f.status_name === 'Harvesting' || f.status_name === 'Maturation'
             );
 
             if (availableFarms.length > 0) {
@@ -571,58 +555,53 @@ const checkInventoryAndSourcingAlerts = () => {
                         .eq('id', order.id);
 
                     if (error) throw error;
-                    alert(`Stock Deficit (${availableWarehouseKg} kg in stock vs ${orderedWeight} kg requested). Order routed to Leaf Outsourcing from ${availableFarms.length} active prospect farm(s).`);
+                    alert(
+                        `Stock Deficit (${availableWarehouseKg} kg in stock vs ${orderedWeight} kg requested). Order routed to Leaf Outsourcing from ${availableFarms.length} active prospect farm(s).`
+                    );
                 } catch (error) {
-                    alert("Error processing sourcing route: " + error.message);
+                    alert('Error processing sourcing route: ' + error.message);
                 }
             } else {
-                alert(`AUTOMATED ORDER REJECTION PROTOCOL TRIGGERED!\n\nReason: Warehouse inventory is deficient (${availableWarehouseKg} kg) and NO registered farms currently have harvestable leaves available.`);
+                alert(
+                    `AUTOMATED ORDER REJECTION PROTOCOL TRIGGERED!\n\nReason: Warehouse inventory is deficient (${availableWarehouseKg} kg) and NO registered farms currently have harvestable leaves available.`
+                );
 
                 try {
-                    const { error } = await supabase
-                        .from('orders')
-                        .update({ order_status: 'Rejected' })
-                        .eq('id', order.id);
-
+                    const { error } = await supabase.from('orders').update({ order_status: 'Rejected' }).eq('id', order.id);
                     if (error) throw error;
                 } catch (error) {
-                    alert("Error updating rejection status: " + error.message);
+                    alert('Error updating rejection status: ' + error.message);
                 }
             }
         }
     };
 
     const handleRejectOrder = async (orderId) => {
-        if (window.confirm("Are you sure you want to reject this request? Entry will be preserved for customer history.")) {
+        if (window.confirm('Are you sure you want to reject this request? Entry will be preserved for customer history.')) {
             try {
-                const { error } = await supabase
-                    .from('orders')
-                    .update({ order_status: 'Rejected' })
-                    .eq('id', orderId);
-
+                const { error } = await supabase.from('orders').update({ order_status: 'Rejected' }).eq('id', orderId);
                 if (error) throw error;
             } catch (error) {
-                alert("Error modifying record: " + error.message);
+                alert('Error modifying record: ' + error.message);
             }
         }
     };
 
     const updateOrderStatus = async (orderId, newStatus) => {
         try {
-            const { error } = await supabase
-                .from('orders')
-                .update({ order_status: newStatus })
-                .eq('id', orderId);
-
+            const { error } = await supabase.from('orders').update({ order_status: newStatus }).eq('id', orderId);
             if (error) throw error;
         } catch (error) {
-            alert("Failed to update status: " + error.message);
+            alert('Failed to update status: ' + error.message);
         }
     };
 
     useEffect(() => {
         const now = new Date().toLocaleDateString('en-PH', {
-            weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric'
         });
         setDateStr(now);
 
@@ -649,16 +628,18 @@ const checkInventoryAndSourcingAlerts = () => {
                 type: 'doughnut',
                 data: {
                     labels: ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'],
-                    datasets: [{
-                        data: ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'].map(grade => {
-                            if (!bastosChartData.labels.length) return 0;
-                            const idx = bastosChartData.labels.indexOf(grade);
-                            return idx !== -1 ? bastosChartData.values[idx] : 0;
-                        }),
-                        backgroundColor: ['#468432', '#5da441', '#ffd700', '#ffef91', '#6c757d'],
-                        borderWidth: 4,
-                        borderColor: '#ffffff'
-                    }]
+                    datasets: [
+                        {
+                            data: ['PID-1', 'PID-2', 'PID-3', 'PID-4', 'PID-R'].map((grade) => {
+                                if (!bastosChartData.labels.length) return 0;
+                                const idx = bastosChartData.labels.indexOf(grade);
+                                return idx !== -1 ? bastosChartData.values[idx] : 0;
+                            }),
+                            backgroundColor: ['#468432', '#5da441', '#ffd700', '#ffef91', '#6c757d'],
+                            borderWidth: 4,
+                            borderColor: '#ffffff'
+                        }
+                    ]
                 },
                 options: {
                     responsive: true,
@@ -688,7 +669,7 @@ const checkInventoryAndSourcingAlerts = () => {
             gradient.addColorStop(1, 'rgba(70, 132, 50, 0)');
 
             const monthlyData = Array(6).fill(0);
-            supabaseOrders.forEach(order => {
+            supabaseOrders.forEach((order) => {
                 if (order.order_status === 'Received') {
                     const date = new Date(order.created_at);
                     const monthIndex = date.getMonth();
@@ -702,16 +683,18 @@ const checkInventoryAndSourcingAlerts = () => {
                 type: 'line',
                 data: {
                     labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
-                    datasets: [{
-                        label: 'Income (₱)',
-                        data: monthlyData,
-                        borderColor: '#468432',
-                        backgroundColor: gradient,
-                        fill: true,
-                        tension: 0.4,
-                        borderWidth: 3,
-                        pointRadius: 2
-                    }]
+                    datasets: [
+                        {
+                            label: 'Income (₱)',
+                            data: monthlyData,
+                            borderColor: '#468432',
+                            backgroundColor: gradient,
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 2
+                        }
+                    ]
                 },
                 options: {
                     responsive: true,
@@ -727,8 +710,14 @@ const checkInventoryAndSourcingAlerts = () => {
 
         return () => {
             window.removeEventListener('resize', handleResize);
-            if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
-            if (salesChartRef.current) { salesChartRef.current.destroy(); salesChartRef.current = null; }
+            if (chartRef.current) {
+                chartRef.current.destroy();
+                chartRef.current = null;
+            }
+            if (salesChartRef.current) {
+                salesChartRef.current.destroy();
+                salesChartRef.current = null;
+            }
         };
     }, [activeTab]);
 
@@ -743,7 +732,7 @@ const checkInventoryAndSourcingAlerts = () => {
     useEffect(() => {
         if (salesChartRef.current) {
             const monthlyData = Array(6).fill(0);
-            supabaseOrders.forEach(order => {
+            supabaseOrders.forEach((order) => {
                 if (order.order_status === 'Received') {
                     const date = new Date(order.created_at);
                     const monthIndex = date.getMonth();
@@ -790,7 +779,7 @@ const checkInventoryAndSourcingAlerts = () => {
         if (cleanContact.startsWith('9') && cleanContact.length === 10) {
             cleanContact = '63' + cleanContact;
         } else {
-            alert("Validation Error: Mobile entry must be exactly 10 digits and start with 9.");
+            alert('Validation Error: Mobile entry must be exactly 10 digits and start with 9.');
             return;
         }
 
@@ -854,12 +843,17 @@ const checkInventoryAndSourcingAlerts = () => {
             }
 
             try {
-                await emailjs.send('service_bxxlbqj', 'template_bs6zso6', {
-                    email: data.email,
-                    farmer_name: data.fullName,
-                    farmer_email: data.email,
-                    temp_password: data.password
-                }, '80xVnHaUIC6d2lJ5l');
+                await emailjs.send(
+                    'service_bxxlbqj',
+                    'template_bs6zso6',
+                    {
+                        email: data.email,
+                        farmer_name: data.fullName,
+                        farmer_email: data.email,
+                        temp_password: data.password
+                    },
+                    '80xVnHaUIC6d2lJ5l'
+                );
             } catch (emailErr) {
                 console.warn('Email notification failed:', emailErr);
             }
@@ -868,13 +862,9 @@ const checkInventoryAndSourcingAlerts = () => {
             document.querySelector('[data-bs-dismiss="modal"]').click();
             e.target.reset();
         } catch (err) {
-            alert("Error: " + err.message);
+            alert('Error: ' + err.message);
         }
     };
-
-    const mapRef = useRef(null);
-    const markerRef = useRef(null);
-    const geocoderInstanceRef = useRef(null);
 
     useEffect(() => {
         const modalEl = document.getElementById('addFarmerModal');
@@ -892,13 +882,15 @@ const checkInventoryAndSourcingAlerts = () => {
 
             const reverseGeocode = async (lat, lng) => {
                 try {
-                    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+                    const res = await fetch(
+                        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`
+                    );
                     const data = await res.json();
                     if (data && data.display_name) {
                         document.getElementById('farmer-address').value = data.display_name;
                     }
                 } catch (err) {
-                    console.error("Error reverse geocoding:", err);
+                    console.error('Error reverse geocoding:', err);
                 }
             };
 
@@ -949,7 +941,11 @@ const checkInventoryAndSourcingAlerts = () => {
             if (!queryText) return;
 
             try {
-                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryText)}&limit=1`);
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+                        queryText
+                    )}&limit=1`
+                );
                 const results = await response.json();
 
                 if (results && results.length > 0) {
@@ -968,26 +964,21 @@ const checkInventoryAndSourcingAlerts = () => {
 
                     document.getElementById('farmer-lat').value = lat;
                     document.getElementById('farmer-lng').value = lng;
-
                     document.getElementById('farmer-address').value = firstResult.display_name;
-
                 } else {
                     alert("Can't find location. Try again or put the specific address.");
                 }
             } catch (err) {
-                console.error("Error searching address via Nominatim:", err);
-                alert("Error finding location. Try again.");
+                console.error('Error searching address via Nominatim:', err);
+                alert('Error finding location. Try again.');
             }
         }
     };
-
-    const unreadMsgCount = messages.filter(m => m.status === 'Unread').length;
 
     return (
         <div className="admin-layout admin-layout-wrapper">
             <div className="container-fluid p-0">
                 <div className="row g-0">
-
                     {/* SIDE NAVIGATION LAYOUT WITH SIGN OUT BUTTON */}
                     <nav className="col-md-3 col-lg-2 bg-lpmpc-green vh-100 position-fixed shadow-sm d-flex flex-column justify-content-between pb-3">
                         <div>
@@ -995,39 +986,55 @@ const checkInventoryAndSourcingAlerts = () => {
                                 <h4 className="fw-bold m-0 text-gold">LPMPC Admin</h4>
                             </div>
                             <div className="nav flex-column mt-md-3">
-                                <button className={`admin-tab-btn ${activeTab === 'v-dash' ? 'active' : ''}`} onClick={() => setActiveTab('v-dash')}>
+                                <button
+                                    className={`admin-tab-btn ${activeTab === 'v-dash' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('v-dash')}
+                                >
                                     <span className="material-symbols-outlined">dashboard</span> DASHBOARD
                                 </button>
-                                <button className={`admin-tab-btn ${activeTab === 'v-farm' ? 'active' : ''}`} onClick={() => setActiveTab('v-farm')}>
+                                <button
+                                    className={`admin-tab-btn ${activeTab === 'v-farm' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('v-farm')}
+                                >
                                     <span className="material-symbols-outlined">timeline</span> FARM
                                 </button>
-                                <button className={`admin-tab-btn ${activeTab === 'v-inv' ? 'active' : ''}`} onClick={() => setActiveTab('v-inv')}>
+                                <button
+                                    className={`admin-tab-btn ${activeTab === 'v-inv' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('v-inv')}
+                                >
                                     <span className="material-symbols-outlined">inventory</span> INVENTORY
                                 </button>
-                                <button className={`admin-tab-btn ${activeTab === 'v-order' ? 'active' : ''}`} onClick={() => setActiveTab('v-order')}>
+                                <button
+                                    className={`admin-tab-btn ${activeTab === 'v-order' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('v-order')}
+                                >
                                     <span className="material-symbols-outlined">shopping_bag</span> ORDERS
                                 </button>
-                                <button className={`admin-tab-btn ${activeTab === 'v-sales' ? 'active' : ''}`} onClick={() => setActiveTab('v-sales')}>
+                                <button
+                                    className={`admin-tab-btn ${activeTab === 'v-sales' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('v-sales')}
+                                >
                                     <span className="material-symbols-outlined">payments</span> SALES
                                 </button>
                             </div>
                         </div>
 
-                        {/* SIGN OUT BUTTON */}
                         <div className="px-3 border-top border-white border-opacity-25 pt-3">
                             <button
                                 className="btn btn-outline-light w-100 d-flex align-items-center justify-content-center fw-bold text-uppercase py-2 rounded-3"
                                 style={{ fontSize: '11px', letterSpacing: '0.5px' }}
                                 onClick={handleSignOut}
                             >
-                                <span className="material-symbols-outlined me-2" style={{ fontSize: '1.2rem' }}>logout</span> SIGN OUT
+                                <span className="material-symbols-outlined me-2" style={{ fontSize: '1.2rem' }}>
+                                    logout
+                                </span>{' '}
+                                SIGN OUT
                             </button>
                         </div>
                     </nav>
 
                     {/* MAIN CONTROLLER CONTAINER */}
                     <main className="col-md-9 col-lg-10 offset-md-3 offset-lg-2 p-3 p-md-4">
-
                         {/* [TAB 1] : DASHBOARD LAYOUT WITH INQUIRIES POPUP CARD */}
                         <div className={`admin-tab-content ${activeTab !== 'v-dash' ? 'd-none' : ''}`}>
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
@@ -1040,14 +1047,36 @@ const checkInventoryAndSourcingAlerts = () => {
 
                             <div className="row g-3 mb-4">
                                 {[
-                                    { label: 'Total Sales Revenue', count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`, color: '#468432' },
-                                    { label: 'Registered Prospect Farms', count: isFarmsLoading ? '...' : farms.length, color: '#b59a00' },
-                                    { label: 'Total Fiber Orders', count: isLoading ? '...' : supabaseOrders.length, color: '#6c757d' }
+                                    {
+                                        label: 'Total Sales Revenue',
+                                        count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`,
+                                        color: '#468432'
+                                    },
+                                    {
+                                        label: 'Registered Prospect Farms',
+                                        count: isFarmsLoading ? '...' : farms.length,
+                                        color: '#b59a00'
+                                    },
+                                    {
+                                        label: 'Total Fiber Orders',
+                                        count: isLoading ? '...' : supabaseOrders.length,
+                                        color: '#6c757d'
+                                    }
                                 ].map((w, i) => (
                                     <div className="col-12 col-sm-4" key={i}>
-                                        <div className="p-4 bg-white border border-light shadow-sm h-100 rounded-0 border-bottom border-3" style={{ borderBottom: `3px solid ${w.color}` }}>
-                                            <div className="text-muted fw-bold text-uppercase mb-2" style={{ fontSize: '11px', letterSpacing: '0.5px' }}>{w.label}</div>
-                                            <h2 className="fw-bold m-0" style={{ fontSize: '32px', color: w.color }}>{w.count}</h2>
+                                        <div
+                                            className="p-4 bg-white border border-light shadow-sm h-100 rounded-0 border-bottom border-3"
+                                            style={{ borderBottom: `3px solid ${w.color}` }}
+                                        >
+                                            <div
+                                                className="text-muted fw-bold text-uppercase mb-2"
+                                                style={{ fontSize: '11px', letterSpacing: '0.5px' }}
+                                            >
+                                                {w.label}
+                                            </div>
+                                            <h2 className="fw-bold m-0" style={{ fontSize: '32px', color: w.color }}>
+                                                {w.count}
+                                            </h2>
                                         </div>
                                     </div>
                                 ))}
@@ -1057,10 +1086,16 @@ const checkInventoryAndSourcingAlerts = () => {
                             <div className="card border-0 shadow-sm rounded-4 p-4 bg-white mb-4">
                                 <div className="d-flex justify-content-between align-items-center mb-3">
                                     <div className="d-flex align-items-center">
-                                        <span className="material-symbols-outlined text-success me-2" style={{ fontSize: '1.8rem' }}>mail</span>
+                                        <span className="material-symbols-outlined text-success me-2" style={{ fontSize: '1.8rem' }}>
+                                            mail
+                                        </span>
                                         <div>
-                                            <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.9rem' }}>Marketplace Inquiries Inbox</h6>
-                                            <small className="text-muted" style={{ fontSize: '0.75rem' }}>Direct messages received from the customer website</small>
+                                            <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.9rem' }}>
+                                                Marketplace Inquiries Inbox
+                                            </h6>
+                                            <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                                                Direct messages received from the customer website
+                                            </small>
                                         </div>
                                     </div>
                                     <button
@@ -1070,8 +1105,6 @@ const checkInventoryAndSourcingAlerts = () => {
                                         View All Messages ({unreadMsgCount} Unread)
                                     </button>
                                 </div>
-
-
 
                                 <div className="table-responsive">
                                     <table className="table table-hover align-middle mb-0" style={{ fontSize: '0.85rem' }}>
@@ -1086,15 +1119,31 @@ const checkInventoryAndSourcingAlerts = () => {
                                         </thead>
                                         <tbody>
                                             {isMessagesLoading ? (
-                                                <tr><td colSpan="5" className="text-center py-3">Loading messages...</td></tr>
+                                                <tr>
+                                                    <td colSpan="5" className="text-center py-3">
+                                                        Loading messages...
+                                                    </td>
+                                                </tr>
                                             ) : messages.length > 0 ? (
                                                 messages.slice(0, 3).map((msg) => (
-                                                    <tr key={msg.id} className={msg.status === 'Unread' ? 'fw-bold bg-light-subtle' : ''}>
-                                                        <td>{msg.sender_name} <small className="text-muted d-block">{msg.sender_email}</small></td>
-                                                        <td className="text-dark">{msg.subject}</td>
-                                                        <td className="text-muted small">{new Date(msg.created_at).toLocaleDateString()}</td>
+                                                    <tr
+                                                        key={msg.id}
+                                                        className={msg.status === 'Unread' ? 'fw-bold bg-light-subtle' : ''}
+                                                    >
                                                         <td>
-                                                            <span className={`badge rounded-pill ${msg.status === 'Unread' ? 'bg-danger' : 'bg-secondary'}`}>
+                                                            {msg.sender_name}{' '}
+                                                            <small className="text-muted d-block">{msg.sender_email}</small>
+                                                        </td>
+                                                        <td className="text-dark">{msg.subject}</td>
+                                                        <td className="text-muted small">
+                                                            {new Date(msg.created_at).toLocaleDateString()}
+                                                        </td>
+                                                        <td>
+                                                            <span
+                                                                className={`badge rounded-pill ${
+                                                                    msg.status === 'Unread' ? 'bg-danger' : 'bg-secondary'
+                                                                }`}
+                                                            >
                                                                 {msg.status}
                                                             </span>
                                                         </td>
@@ -1111,7 +1160,11 @@ const checkInventoryAndSourcingAlerts = () => {
                                                     </tr>
                                                 ))
                                             ) : (
-                                                <tr><td colSpan="5" className="text-center py-3 text-muted">No messages received yet.</td></tr>
+                                                <tr>
+                                                    <td colSpan="5" className="text-center py-3 text-muted">
+                                                        No messages received yet.
+                                                    </td>
+                                                </tr>
                                             )}
                                         </tbody>
                                     </table>
@@ -1121,40 +1174,67 @@ const checkInventoryAndSourcingAlerts = () => {
                             {/* SMART INVENTORY & FARM SOURCING RECOMMENDATIONS WIDGET */}
                             <div className="card border-0 shadow-sm rounded-4 p-4 bg-white mb-4 border-start border-4 border-warning">
                                 <div className="d-flex align-items-center mb-3">
-                                    <span className="material-symbols-outlined text-warning me-2" style={{ fontSize: '1.8rem' }}>notification_important</span>
+                                    <span className="material-symbols-outlined text-warning me-2" style={{ fontSize: '1.8rem' }}>
+                                        notification_important
+                                    </span>
                                     <div>
-                                        <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.9rem' }}>Inventory & Farm Sourcing Recommendations</h6>
-                                        <small className="text-muted" style={{ fontSize: '0.75rem' }}>Automated advisory based on warehouse stock levels and upcoming farm harvests</small>
+                                        <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.9rem' }}>
+                                            Inventory & Farm Sourcing Recommendations
+                                        </h6>
+                                        <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                                            Automated advisory based on warehouse stock levels and upcoming farm harvests
+                                        </small>
                                     </div>
                                 </div>
 
                                 <div className="vstack gap-2">
-                                    {inventoryStock.filter(i => i.stockKg < 20).length > 0 ? (
-                                        inventoryStock.filter(i => i.stockKg < 20).map((lowItem, idx) => {
-                                            const prospectFarms = farms.filter(f => f.status_name === 'Maturation' || f.status_name === 'Harvesting');
+                                    {inventoryStock.filter((i) => i.stockKg < 20).length > 0 ? (
+                                        inventoryStock
+                                            .filter((i) => i.stockKg < 20)
+                                            .map((lowItem, idx) => {
+                                                const prospectFarms = farms.filter(
+                                                    (f) => f.status_name === 'Maturation' || f.status_name === 'Harvesting'
+                                                );
 
-                                            return (
-                                                <div key={idx} className="p-3 bg-light rounded-3 border d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
-                                                    <div>
-                                                        <span className="badge bg-danger me-2">LOW STOCK: {lowItem.id}</span>
-                                                        <span className="fw-bold text-dark">Current Stock: {lowItem.stockKg.toFixed(1)} kg</span>
-                                                        <p className="text-muted small m-0 mt-1">
-                                                            {prospectFarms.length > 0 ? (
-                                                                <span>Suggested Sourcing Farm(s): <strong>{prospectFarms.map(f => `${f.farm_name} (${f.batch_id} - ${f.status_name})`).join(', ')}</strong></span>
-                                                            ) : (
-                                                                <span className="text-danger">Warning: No prospect farms currently in Maturation or Harvesting stage!</span>
-                                                            )}
-                                                        </p>
-                                                    </div>
-                                                    <button
-                                                        className="btn btn-sm btn-outline-success fw-bold text-uppercase rounded-pill px-3"
-                                                        onClick={() => setActiveTab('v-farm')}
+                                                return (
+                                                    <div
+                                                        key={idx}
+                                                        className="p-3 bg-light rounded-3 border d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2"
                                                     >
-                                                        View Farm Timeline
-                                                    </button>
-                                                </div>
-                                            );
-                                        })
+                                                        <div>
+                                                            <span className="badge bg-danger me-2">LOW STOCK: {lowItem.id}</span>
+                                                            <span className="fw-bold text-dark">
+                                                                Current Stock: {lowItem.stockKg.toFixed(1)} kg
+                                                            </span>
+                                                            <p className="text-muted small m-0 mt-1">
+                                                                {prospectFarms.length > 0 ? (
+                                                                    <span>
+                                                                        Suggested Sourcing Farm(s):{' '}
+                                                                        <strong>
+                                                                            {prospectFarms
+                                                                                .map(
+                                                                                    (f) =>
+                                                                                        `${f.farm_name} (${f.batch_id} - ${f.status_name})`
+                                                                                )
+                                                                                .join(', ')}
+                                                                        </strong>
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="text-danger">
+                                                                        Warning: No prospect farms currently in Maturation or Harvesting stage!
+                                                                    </span>
+                                                                )}
+                                                            </p>
+                                                        </div>
+                                                        <button
+                                                            className="btn btn-sm btn-outline-success fw-bold text-uppercase rounded-pill px-3"
+                                                            onClick={() => setActiveTab('v-farm')}
+                                                        >
+                                                            View Farm Timeline
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })
                                     ) : (
                                         <div className="text-success small fw-bold py-2">
                                             ✔ All fiber inventory grades (PID-1 to PID-R) are at optimal stock levels. No sourcing alerts at this time.
@@ -1165,9 +1245,14 @@ const checkInventoryAndSourcingAlerts = () => {
 
                             <div className="row g-3">
                                 <div className="col-12 col-lg-7">
-                                    <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white h-100" style={{ minHeight: '300px' }}>
+                                    <div
+                                        className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white h-100"
+                                        style={{ minHeight: '300px' }}
+                                    >
                                         <div className="mb-4">
-                                            <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>Sales Revenue (Monthly)</h6>
+                                            <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>
+                                                Sales Revenue (Monthly)
+                                            </h6>
                                         </div>
                                         <div className="flex-grow-1" style={{ position: 'relative', height: '100%' }}>
                                             <canvas ref={salesChartCanvas}></canvas>
@@ -1175,8 +1260,13 @@ const checkInventoryAndSourcingAlerts = () => {
                                     </div>
                                 </div>
                                 <div className="col-12 col-lg-5">
-                                    <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white h-100" style={{ minHeight: '300px' }}>
-                                        <h6 className="fw-bold text-uppercase mb-4 lpmpc-green" style={{ fontSize: '0.85rem' }}>Fiber Inventory Distribution</h6>
+                                    <div
+                                        className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white h-100"
+                                        style={{ minHeight: '300px' }}
+                                    >
+                                        <h6 className="fw-bold text-uppercase mb-4 lpmpc-green" style={{ fontSize: '0.85rem' }}>
+                                            Fiber Inventory Distribution
+                                        </h6>
                                         <div className="flex-grow-1" style={{ position: 'relative', height: '100%' }}>
                                             <canvas ref={chartCanvas}></canvas>
                                         </div>
@@ -1189,8 +1279,12 @@ const checkInventoryAndSourcingAlerts = () => {
                         <div className={`admin-tab-content ${activeTab !== 'v-farm' ? 'd-none' : ''}`}>
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
                                 <div>
-                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">FARM SOURCING MANAGEMENT</h2>
-                                    <p className="text-muted m-0 small">Tracking Queen Pineapple crop growth and harvest timelines</p>
+                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">
+                                        FARM SOURCING MANAGEMENT
+                                    </h2>
+                                    <p className="text-muted m-0 small">
+                                        Tracking Queen Pineapple crop growth and harvest timelines
+                                    </p>
                                 </div>
                                 <div className="date-display fw-bold text-uppercase small text-lpmpc">{dateStr}</div>
                             </div>
@@ -1198,7 +1292,12 @@ const checkInventoryAndSourcingAlerts = () => {
                             <div className="card border rounded-0 mb-3 p-3 bg-white no-hover">
                                 <div className="row g-3 align-items-center">
                                     <div className="col-12 col-md-6">
-                                        <input type="text" className="form-control" placeholder="Search farm name..." onKeyUp={filterTimeline} />
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            placeholder="Search farm name..."
+                                            onKeyUp={filterTimeline}
+                                        />
                                     </div>
                                     <div className="col-12 col-md-6 text-md-end">
                                         <small className="text-muted d-block">Drag to pan • Ctrl + Scroll to zoom</small>
@@ -1218,7 +1317,9 @@ const checkInventoryAndSourcingAlerts = () => {
 
                                     {/* STATUS FILTER DROPDOWN */}
                                     <div className="d-flex align-items-center gap-2">
-                                        <span className="small text-muted fw-bold text-uppercase" style={{ fontSize: '11px' }}>Filter Status:</span>
+                                        <span className="small text-muted fw-bold text-uppercase" style={{ fontSize: '11px' }}>
+                                            Filter Status:
+                                        </span>
                                         <select
                                             className="form-select form-select-sm rounded-0 border-secondary fw-bold text-uppercase"
                                             style={{ fontSize: '11px', width: '150px' }}
@@ -1249,58 +1350,102 @@ const checkInventoryAndSourcingAlerts = () => {
                                         </thead>
                                         <tbody>
                                             {isFarmsLoading ? (
-                                                <tr><td colSpan="6" className="text-center">Syncing farm database...</td></tr>
-                                            ) : farms.filter(f => {
-                                                const matchesSearch = (f.batch_id || '').toLowerCase().includes(searchQuery.toLowerCase()) || (f.farm_name || '').toLowerCase().includes(searchQuery.toLowerCase());
-                                                const matchesDrop = farmStatusFilter === 'ALL' || (f.status_name || '').toUpperCase() === farmStatusFilter;
-                                                return matchesSearch && matchesDrop;
-                                            }).length > 0 ? (
-                                                farms.filter(f => {
-                                                    const matchesSearch = (f.batch_id || '').toLowerCase().includes(searchQuery.toLowerCase()) || (f.farm_name || '').toLowerCase().includes(searchQuery.toLowerCase());
-                                                    const matchesDrop = farmStatusFilter === 'ALL' || (f.status_name || '').toUpperCase() === farmStatusFilter;
-                                                    return matchesSearch && matchesDrop;
-                                                }).map((farm) => {
-                                                    const s = (farm.status_name || 'vegetative').toLowerCase();
+                                                <tr>
+                                                    <td colSpan="6" className="text-center">
+                                                        Syncing farm database...
+                                                    </td>
+                                                </tr>
+                                            ) : farms.filter((f) => {
+                                                  const matchesSearch =
+                                                      (f.batch_id || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                                      (f.farm_name || '').toLowerCase().includes(searchQuery.toLowerCase());
+                                                  const matchesDrop =
+                                                      farmStatusFilter === 'ALL' ||
+                                                      (f.status_name || '').toUpperCase() === farmStatusFilter;
+                                                  return matchesSearch && matchesDrop;
+                                              }).length > 0 ? (
+                                                farms
+                                                    .filter((f) => {
+                                                        const matchesSearch =
+                                                            (f.batch_id || '')
+                                                                .toLowerCase()
+                                                                .includes(searchQuery.toLowerCase()) ||
+                                                            (f.farm_name || '')
+                                                                .toLowerCase()
+                                                                .includes(searchQuery.toLowerCase());
+                                                        const matchesDrop =
+                                                            farmStatusFilter === 'ALL' ||
+                                                            (f.status_name || '').toUpperCase() === farmStatusFilter;
+                                                        return matchesSearch && matchesDrop;
+                                                    })
+                                                    .map((farm) => {
+                                                        const s = (farm.status_name || 'vegetative').toLowerCase();
+                                                        const badgeColors = {
+                                                            vegetative: 'bg-success text-white',
+                                                            flowering: 'bg-pink text-white',
+                                                            maturation: 'bg-warning text-dark',
+                                                            harvesting: 'bg-info text-white',
+                                                            harvested: 'bg-secondary text-white'
+                                                        };
+                                                        const badgeClass = badgeColors[s] || 'bg-success text-white';
 
-                                                    const badgeColors = {
-                                                        vegetative: 'bg-success text-white',
-                                                        flowering: 'bg-pink text-white',
-                                                        maturation: 'bg-warning text-dark',
-                                                        harvesting: 'bg-info text-white',
-                                                        harvested: 'bg-secondary text-white'
-                                                    };
-                                                    const badgeClass = badgeColors[s] || 'bg-success text-white';
-
-                                                    return (
-                                                        <tr key={farm.id}>
-                                                            <td className="ps-4 fw-bold">{farm.batch_id}</td>
-                                                            <td>{farm.farm_name}</td>
-                                                            <td>{farm.owner_name}</td>
-                                                            <td><span className={`badge ${badgeClass}`}>{farm.status_name || 'Vegetative'}</span></td>
-                                                            <td>
-                                                                <div
-                                                                    className="d-flex align-items-center justify-content-center text-white fw-bold rounded"
-                                                                    style={{ backgroundColor: '#468432', width: '80px', height: '30px', fontSize: '0.85rem' }}
-                                                                >
-                                                                    {farm.progress || 0}%
-                                                                </div>
-                                                            </td>
-                                                            <td className="fw-bold text-secondary small">
-                                                                {farm.status_name === 'Harvested' ? (
-                                                                    <span className="text-success">
-                                                                        {farm.harvested_date
-                                                                            ? `Harvested on: ${new Date(farm.harvested_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
-                                                                            : 'Harvested (Completed)'}
+                                                        return (
+                                                            <tr key={farm.id}>
+                                                                <td className="ps-4 fw-bold">{farm.batch_id}</td>
+                                                                <td>{farm.farm_name}</td>
+                                                                <td>{farm.owner_name}</td>
+                                                                <td>
+                                                                    <span className={`badge ${badgeClass}`}>
+                                                                        {farm.status_name || 'Vegetative'}
                                                                     </span>
-                                                                ) : (
-                                                                    <span>Pred: {farm.end_date ? new Date(farm.end_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'N/A'}</span>
-                                                                )}
-                                                            </td>
-                                                        </tr>
-                                                    );
-                                                })
+                                                                </td>
+                                                                <td>
+                                                                    <div
+                                                                        className="d-flex align-items-center justify-content-center text-white fw-bold rounded"
+                                                                        style={{
+                                                                            backgroundColor: '#468432',
+                                                                            width: '80px',
+                                                                            height: '30px',
+                                                                            fontSize: '0.85rem'
+                                                                        }}
+                                                                    >
+                                                                        {farm.progress || 0}%
+                                                                    </div>
+                                                                </td>
+                                                                <td className="fw-bold text-secondary small">
+                                                                    {farm.status_name === 'Harvested' ? (
+                                                                        <span className="text-success">
+                                                                            {farm.harvested_date
+                                                                                ? `Harvested on: ${new Date(
+                                                                                      farm.harvested_date
+                                                                                  ).toLocaleDateString('en-US', {
+                                                                                      month: 'short',
+                                                                                      day: 'numeric',
+                                                                                      year: 'numeric'
+                                                                                  })}`
+                                                                                : 'Harvested (Completed)'}
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span>
+                                                                            Pred:{' '}
+                                                                            {farm.end_date
+                                                                                ? new Date(farm.end_date).toLocaleDateString(
+                                                                                      'en-US',
+                                                                                      { month: 'short', year: 'numeric' }
+                                                                                  )
+                                                                                : 'N/A'}
+                                                                        </span>
+                                                                    )}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })
                                             ) : (
-                                                <tr><td colSpan="6" className="text-center py-4 text-muted small">No farm batches found matching criteria.</td></tr>
+                                                <tr>
+                                                    <td colSpan="6" className="text-center py-4 text-muted small">
+                                                        No farm batches found matching criteria.
+                                                    </td>
+                                                </tr>
                                             )}
                                         </tbody>
                                     </table>
@@ -1324,15 +1469,18 @@ const checkInventoryAndSourcingAlerts = () => {
                             >
                                 +
                             </button>
-
                         </div>
 
                         {/* [TAB 3] : INVENTORY TAB LAYOUT (PID-1 to PID-R) */}
                         <div className={`admin-tab-content ${activeTab !== 'v-inv' ? 'd-none' : ''}`}>
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
                                 <div>
-                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">Decorticated Fiber Inventory</h2>
-                                    <p className="text-muted m-0 small">PNS/BAFS 318:2021 Automated Visual Grading & Stock Ledger</p>
+                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">
+                                        Decorticated Fiber Inventory
+                                    </h2>
+                                    <p className="text-muted m-0 small">
+                                        PNS/BAFS 318:2021 Automated Visual Grading & Stock Ledger
+                                    </p>
                                 </div>
                                 <div className="date-display fw-bold text-uppercase small text-lpmpc">{dateStr}</div>
                             </div>
@@ -1340,34 +1488,75 @@ const checkInventoryAndSourcingAlerts = () => {
                             <div className="row g-4 mb-4">
                                 {/* ROBOTICS SCANNER WIDGET */}
                                 <div className="col-12 col-lg-5">
-                                    <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm h-100" style={{ background: 'linear-gradient(135deg, #f8fcf7 0%, #ffffff 100%)', border: '1px solid #e1eedd !important' }}>
+                                    <div
+                                        className="card border-0 rounded-4 p-3 p-md-4 shadow-sm h-100"
+                                        style={{
+                                            background: 'linear-gradient(135deg, #f8fcf7 0%, #ffffff 100%)',
+                                            border: '1px solid #e1eedd !important'
+                                        }}
+                                    >
                                         <div className="d-flex justify-content-between align-items-start mb-4">
                                             <div>
-                                                <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>Robotics Optical Scanner</h6>
-                                                <small className="text-muted" style={{ fontSize: '0.7rem' }}>Piña-QualiFi Conveyor Unit #1</small>
+                                                <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>
+                                                    Robotics Optical Scanner
+                                                </h6>
+                                                <small className="text-muted" style={{ fontSize: '0.7rem' }}>
+                                                    Piña-QualiFi Conveyor Unit #1
+                                                </small>
                                             </div>
-                                            <span className="badge rounded-pill pulse px-2 py-2" style={{ backgroundColor: 'var(--lpmpc-light-yellow)', color: 'var(--lpmpc-green)', border: '1px solid var(--lpmpc-green)', fontSize: '0.6rem' }}>
+                                            <span
+                                                className="badge rounded-pill pulse px-2 py-2"
+                                                style={{
+                                                    backgroundColor: 'var(--lpmpc-light-yellow)',
+                                                    color: 'var(--lpmpc-green)',
+                                                    border: '1px solid var(--lpmpc-green)',
+                                                    fontSize: '0.6rem'
+                                                }}
+                                            >
                                                 ● LIVE GRADING ANALYSIS
                                             </span>
                                         </div>
 
-                                        <div className="flex-grow-1 d-flex flex-column justify-content-center p-3 rounded-4 mb-3" style={{ backgroundColor: '#ffffff', border: '1px solid #e1eedd' }}>
+                                        <div
+                                            className="flex-grow-1 d-flex flex-column justify-content-center p-3 rounded-4 mb-3"
+                                            style={{ backgroundColor: '#ffffff', border: '1px solid #e1eedd' }}
+                                        >
                                             <div className="text-center mb-3">
-                                                <span className="material-symbols-outlined lpmpc-green opacity-25" style={{ fontSize: '2rem' }}>precision_manufacturing</span>
+                                                <span className="material-symbols-outlined lpmpc-green opacity-25" style={{ fontSize: '2rem' }}>
+                                                    precision_manufacturing
+                                                </span>
                                                 <div className="d-flex align-items-center justify-content-center mt-1">
-                                                    <span className="material-symbols-outlined lpmpc-green me-2" style={{ fontSize: '1rem' }}>visibility</span>
-                                                    <p className="fw-bold lpmpc-green mb-0" style={{ fontSize: '0.75rem' }}>Visual Sensor Array Active</p>
+                                                    <span className="material-symbols-outlined lpmpc-green me-2" style={{ fontSize: '1rem' }}>
+                                                        visibility
+                                                    </span>
+                                                    <p className="fw-bold lpmpc-green mb-0" style={{ fontSize: '0.75rem' }}>
+                                                        Visual Sensor Array Active
+                                                    </p>
                                                 </div>
                                             </div>
 
                                             <div className="w-100 px-1">
-                                                {[{ l: 'Color Spectrum', v: '94%' }, { l: 'Purity / Cleanliness', v: '88%' }, { l: 'Surface Texture', v: '91%' }].map((m, i) => (
+                                                {[
+                                                    { l: 'Color Spectrum', v: '94%' },
+                                                    { l: 'Purity / Cleanliness', v: '88%' },
+                                                    { l: 'Surface Texture', v: '91%' }
+                                                ].map((m, i) => (
                                                     <div className="mb-2" key={i}>
-                                                        <div className="d-flex justify-content-between small mb-1 fw-bold lpmpc-green" style={{ fontSize: '0.7rem' }}>
-                                                            <span>{m.l}</span><span>{m.v}</span>
+                                                        <div
+                                                            className="d-flex justify-content-between small mb-1 fw-bold lpmpc-green"
+                                                            style={{ fontSize: '0.7rem' }}
+                                                        >
+                                                            <span>{m.l}</span>
+                                                            <span>{m.v}</span>
                                                         </div>
                                                         <div className="progress rounded-pill" style={{ height: '5px' }}>
-                                                            <div className="progress-bar" style={{ width: m.v, backgroundColor: i === 1 ? 'var(--lpmpc-gold)' : 'var(--lpmpc-green)' }}></div>
+                                                            <div
+                                                                className="progress-bar"
+                                                                style={{
+                                                                    width: m.v,
+                                                                    backgroundColor: i === 1 ? 'var(--lpmpc-gold)' : 'var(--lpmpc-green)'
+                                                                }}
+                                                            ></div>
                                                         </div>
                                                     </div>
                                                 ))}
@@ -1379,7 +1568,9 @@ const checkInventoryAndSourcingAlerts = () => {
                                 {/* RECENT SCANNED BATCHES TABLE */}
                                 <div className="col-12 col-lg-7">
                                     <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white h-100">
-                                        <h6 className="fw-bold text-uppercase mb-4 lpmpc-green" style={{ fontSize: '0.85rem' }}>Recent Scanned Fiber Batches</h6>
+                                        <h6 className="fw-bold text-uppercase mb-4 lpmpc-green" style={{ fontSize: '0.85rem' }}>
+                                            Recent Scanned Fiber Batches
+                                        </h6>
                                         <div className="table-responsive">
                                             <table className="table table-hover align-middle mb-0" style={{ minWidth: '400px' }}>
                                                 <thead>
@@ -1392,20 +1583,38 @@ const checkInventoryAndSourcingAlerts = () => {
                                                 </thead>
                                                 <tbody style={{ fontSize: '0.8rem' }}>
                                                     {isInventoryLoading ? (
-                                                        <tr><td colSpan="4" className="text-center py-3">Syncing scanner logs...</td></tr>
+                                                        <tr>
+                                                            <td colSpan="4" className="text-center py-3">
+                                                                Syncing scanner logs...
+                                                            </td>
+                                                        </tr>
                                                     ) : recentScannedBatches.length > 0 ? (
                                                         recentScannedBatches.map((batch, idx) => (
-                                                            <tr key={idx} className="border-bottom" style={{ cursor: 'pointer' }} onClick={() => setSelectedBatch(batch)}>
+                                                            <tr
+                                                                key={idx}
+                                                                className="border-bottom"
+                                                                style={{ cursor: 'pointer' }}
+                                                                onClick={() => setSelectedBatch(batch)}
+                                                            >
                                                                 <td className="py-3 fw-bold lpmpc-green">{batch.id}</td>
                                                                 <td className="text-center">
-                                                                    <span className="badge rounded-pill bg-success bg-opacity-10 text-success fw-bold" style={{ fontSize: '0.65rem' }}>{batch.grade}</span>
+                                                                    <span
+                                                                        className="badge rounded-pill bg-success bg-opacity-10 text-success fw-bold"
+                                                                        style={{ fontSize: '0.65rem' }}
+                                                                    >
+                                                                        {batch.grade}
+                                                                    </span>
                                                                 </td>
                                                                 <td className="text-center fw-bold text-muted">{batch.score}</td>
                                                                 <td className="text-end text-muted small">{batch.timestamp}</td>
                                                             </tr>
                                                         ))
                                                     ) : (
-                                                        <tr><td colSpan="4" className="text-center py-3 text-muted">No recent conveyor scans logged.</td></tr>
+                                                        <tr>
+                                                            <td colSpan="4" className="text-center py-3 text-muted">
+                                                                No recent conveyor scans logged.
+                                                            </td>
+                                                        </tr>
                                                     )}
                                                 </tbody>
                                             </table>
@@ -1418,15 +1627,22 @@ const checkInventoryAndSourcingAlerts = () => {
                                     <div className="card border-0 rounded-4 p-3 p-md-4 shadow-sm bg-white mt-2">
                                         <div className="d-flex justify-content-between align-items-center mb-4">
                                             <div>
-                                                <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>Decorticated Fiber Stock Ledger</h6>
-                                                <small className="text-muted" style={{ fontSize: '0.75rem' }}>Live warehouse stock balances queried directly from database logs</small>
+                                                <h6 className="fw-bold text-uppercase m-0 lpmpc-green" style={{ fontSize: '0.85rem' }}>
+                                                    Decorticated Fiber Stock Ledger
+                                                </h6>
+                                                <small className="text-muted" style={{ fontSize: '0.75rem' }}>
+                                                    Live warehouse stock balances queried directly from database logs
+                                                </small>
                                             </div>
                                         </div>
 
                                         <div className="table-responsive">
                                             <table className="table table-hover align-middle mb-0">
                                                 <thead className="bg-light">
-                                                    <tr className="text-muted text-uppercase small border-bottom" style={{ fontSize: '0.7rem', letterSpacing: '0.5px' }}>
+                                                    <tr
+                                                        className="text-muted text-uppercase small border-bottom"
+                                                        style={{ fontSize: '0.7rem', letterSpacing: '0.5px' }}
+                                                    >
                                                         <th className="py-3 ps-3">PNS Grade</th>
                                                         <th className="py-3 text-center">Available Stock (kg)</th>
                                                         <th className="py-3 text-center">Baseline Rate</th>
@@ -1436,28 +1652,51 @@ const checkInventoryAndSourcingAlerts = () => {
                                                 </thead>
                                                 <tbody style={{ fontSize: '0.85rem' }}>
                                                     {isInventoryLoading ? (
-                                                        <tr><td colSpan="5" className="text-center py-4">Syncing live inventory database...</td></tr>
-                                                    ) : inventoryStock.map((fiber, idx) => (
-                                                        <tr key={idx} className="border-bottom" style={{ cursor: 'pointer' }} onClick={() => setSelectedBatch(fiber)}>
-                                                            <td className="py-3 ps-3 fw-bold lpmpc-green">{fiber.id}</td>
-                                                            <td className="py-3 text-center fw-bold text-dark">{fiber.stockKg.toFixed(1)} kg</td>
-                                                            <td className="py-3 text-center fw-bold text-success">{fiber.price}</td>
-                                                            <td className="py-3 text-center">
-                                                                <span className={`badge rounded-pill px-2 py-1 ${
-                                                                    fiber.status === 'Optimal' ? 'bg-success bg-opacity-10 text-success' :
-                                                                    fiber.status === 'Low Stock' ? 'bg-warning bg-opacity-10 text-warning' :
-                                                                    'bg-danger bg-opacity-10 text-danger'
-                                                                }`} style={{ fontSize: '0.65rem' }}>
-                                                                    {fiber.status}
-                                                                </span>
-                                                            </td>
-                                                            <td className="py-3 text-end pe-3">
-                                                                <button className="btn btn-sm text-success fw-bold p-0" style={{ fontSize: '0.75rem' }}>
-                                                                    View Details
-                                                                </button>
+                                                        <tr>
+                                                            <td colSpan="5" className="text-center py-4">
+                                                                Syncing live inventory database...
                                                             </td>
                                                         </tr>
-                                                    ))}
+                                                    ) : (
+                                                        inventoryStock.map((fiber, idx) => (
+                                                            <tr
+                                                                key={idx}
+                                                                className="border-bottom"
+                                                                style={{ cursor: 'pointer' }}
+                                                                onClick={() => setSelectedBatch(fiber)}
+                                                            >
+                                                                <td className="py-3 ps-3 fw-bold lpmpc-green">{fiber.id}</td>
+                                                                <td className="py-3 text-center fw-bold text-dark">
+                                                                    {fiber.stockKg.toFixed(1)} kg
+                                                                </td>
+                                                                <td className="py-3 text-center fw-bold text-success">
+                                                                    {fiber.price}
+                                                                </td>
+                                                                <td className="py-3 text-center">
+                                                                    <span
+                                                                        className={`badge rounded-pill px-2 py-1 ${
+                                                                            fiber.status === 'Optimal'
+                                                                                ? 'bg-success bg-opacity-10 text-success'
+                                                                                : fiber.status === 'Low Stock'
+                                                                                ? 'bg-warning bg-opacity-10 text-warning'
+                                                                                : 'bg-danger bg-opacity-10 text-danger'
+                                                                        }`}
+                                                                        style={{ fontSize: '0.65rem' }}
+                                                                    >
+                                                                        {fiber.status}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="py-3 text-end pe-3">
+                                                                    <button
+                                                                        className="btn btn-sm text-success fw-bold p-0"
+                                                                        style={{ fontSize: '0.75rem' }}
+                                                                    >
+                                                                        View Details
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        ))
+                                                    )}
                                                 </tbody>
                                             </table>
                                         </div>
@@ -1467,47 +1706,123 @@ const checkInventoryAndSourcingAlerts = () => {
 
                             {/* BATCH DETAIL MODAL */}
                             {selectedBatch && (
-                                <div className="modal-backdrop d-flex align-items-center justify-content-center p-2 p-md-3" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(70, 132, 50, 0.4)', zIndex: 2050, backdropFilter: 'blur(4px)' }}>
-                                    <div className="card border-0 rounded-4 shadow-lg w-100" style={{ maxWidth: '500px', background: '#ffffff', maxHeight: '90vh', overflowY: 'auto' }}>
+                                <div
+                                    className="modal-backdrop d-flex align-items-center justify-content-center p-2 p-md-3"
+                                    style={{
+                                        position: 'fixed',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100vw',
+                                        height: '100vh',
+                                        backgroundColor: 'rgba(70, 132, 50, 0.4)',
+                                        zIndex: 2050,
+                                        backdropFilter: 'blur(4px)'
+                                    }}
+                                >
+                                    <div
+                                        className="card border-0 rounded-4 shadow-lg w-100"
+                                        style={{ maxWidth: '500px', background: '#ffffff', maxHeight: '90vh', overflowY: 'auto' }}
+                                    >
                                         <div className="card-header bg-transparent border-0 p-4 d-flex justify-content-between align-items-center sticky-top bg-white">
                                             <div>
-                                                <h5 className="fw-bold lpmpc-green m-0 text-uppercase" style={{ fontSize: '1rem' }}>PNS Grade Quality Report</h5>
+                                                <h5 className="fw-bold lpmpc-green m-0 text-uppercase" style={{ fontSize: '1rem' }}>
+                                                    PNS Grade Quality Report
+                                                </h5>
                                                 <small className="text-muted">{selectedBatch.id}</small>
                                             </div>
                                             <button className="btn-close" onClick={() => setSelectedBatch(null)}></button>
                                         </div>
 
                                         <div className="card-body p-4 pt-0">
-                                            <div className="text-center p-4 rounded-4 mb-4" style={{ backgroundColor: '#f8fcf7', border: '1px solid #e1eedd' }}>
-                                                <p className="text-muted small text-uppercase fw-bold mb-1">Quality Assessment Score</p>
-                                                <h1 className="display-4 fw-bold lpmpc-green m-0">{selectedBatch.score ? selectedBatch.score.split('/')[0] : '92'}<small style={{ fontSize: '1.5rem' }}>%</small></h1>
-                                                <span className="badge rounded-pill bg-success bg-opacity-10 text-success px-3 py-2 mt-2">{selectedBatch.grade || selectedBatch.id}</span>
+                                            <div
+                                                className="text-center p-4 rounded-4 mb-4"
+                                                style={{ backgroundColor: '#f8fcf7', border: '1px solid #e1eedd' }}
+                                            >
+                                                <p className="text-muted small text-uppercase fw-bold mb-1">
+                                                    Quality Assessment Score
+                                                </p>
+                                                <h1 className="display-4 fw-bold lpmpc-green m-0">
+                                                    {selectedBatch.score ? selectedBatch.score.split('/')[0] : '92'}
+                                                    <small style={{ fontSize: '1.5rem' }}>%</small>
+                                                </h1>
+                                                <span className="badge rounded-pill bg-success bg-opacity-10 text-success px-3 py-2 mt-2">
+                                                    {selectedBatch.grade || selectedBatch.id}
+                                                </span>
                                             </div>
 
-                                            <h6 className="fw-bold lpmpc-green mb-3 text-uppercase" style={{ fontSize: '0.75rem' }}>PNS/BAFS 318:2021 Metrics</h6>
+                                            <h6 className="fw-bold lpmpc-green mb-3 text-uppercase" style={{ fontSize: '0.75rem' }}>
+                                                PNS/BAFS 318:2021 Metrics
+                                            </h6>
 
                                             <div className="vstack gap-3">
                                                 {[
-                                                    { label: 'Color / Luster', score: 94, desc: 'Light Ivory profile compliant', icon: 'palette' },
-                                                    { label: 'Cleanliness (Purity)', score: 88, desc: 'Minimal residual decortication debris', icon: 'cleaning_services' },
-                                                    { label: 'Texture / Tensile', score: 91, desc: 'High flexibility and bundle strength', icon: 'texture' }
+                                                    {
+                                                        label: 'Color / Luster',
+                                                        score: 94,
+                                                        desc: 'Light Ivory profile compliant',
+                                                        icon: 'palette'
+                                                    },
+                                                    {
+                                                        label: 'Cleanliness (Purity)',
+                                                        score: 88,
+                                                        desc: 'Minimal residual decortication debris',
+                                                        icon: 'cleaning_services'
+                                                    },
+                                                    {
+                                                        label: 'Texture / Tensile',
+                                                        score: 91,
+                                                        desc: 'High flexibility and bundle strength',
+                                                        icon: 'texture'
+                                                    }
                                                 ].map((metric, i) => (
                                                     <div key={i} className="p-3 rounded-3 border">
                                                         <div className="d-flex justify-content-between align-items-center mb-2">
                                                             <div className="d-flex align-items-center">
-                                                                <span className="material-symbols-outlined lpmpc-green me-2" style={{ fontSize: '1.2rem' }}>{metric.icon}</span>
-                                                                <span className="fw-bold lpmpc-green" style={{ fontSize: '0.85rem' }}>{metric.label}</span>
+                                                                <span
+                                                                    className="material-symbols-outlined lpmpc-green me-2"
+                                                                    style={{ fontSize: '1.2rem' }}
+                                                                >
+                                                                    {metric.icon}
+                                                                </span>
+                                                                <span className="fw-bold lpmpc-green" style={{ fontSize: '0.85rem' }}>
+                                                                    {metric.label}
+                                                                </span>
                                                             </div>
-                                                            <span className="fw-bold" style={{ color: i === 1 ? 'var(--lpmpc-gold)' : 'var(--lpmpc-green)' }}>{metric.score}%</span>
+                                                            <span
+                                                                className="fw-bold"
+                                                                style={{ color: i === 1 ? 'var(--lpmpc-gold)' : 'var(--lpmpc-green)' }}
+                                                            >
+                                                                {metric.score}%
+                                                            </span>
                                                         </div>
                                                         <div className="progress rounded-pill mb-2" style={{ height: '6px' }}>
-                                                            <div className="progress-bar" style={{ width: `${metric.score}%`, backgroundColor: i === 1 ? 'var(--lpmpc-gold)' : 'var(--lpmpc-green)' }}></div>
+                                                            <div
+                                                                className="progress-bar"
+                                                                style={{
+                                                                    width: `${metric.score}%`,
+                                                                    backgroundColor:
+                                                                        i === 1 ? 'var(--lpmpc-gold)' : 'var(--lpmpc-green)'
+                                                                }}
+                                                            ></div>
                                                         </div>
-                                                        <p className="m-0 text-muted" style={{ fontSize: '0.7rem' }}>{metric.desc}</p>
+                                                        <p className="m-0 text-muted" style={{ fontSize: '0.7rem' }}>
+                                                            {metric.desc}
+                                                        </p>
                                                     </div>
                                                 ))}
                                             </div>
-                                            <button className="btn w-100 mt-4 py-2 fw-bold text-uppercase rounded-3" onClick={() => setSelectedBatch(null)} style={{ backgroundColor: 'var(--lpmpc-green)', color: 'white', fontSize: '0.8rem', border: 'none' }}>Close Report</button>
+                                            <button
+                                                className="btn w-100 mt-4 py-2 fw-bold text-uppercase rounded-3"
+                                                onClick={() => setSelectedBatch(null)}
+                                                style={{
+                                                    backgroundColor: 'var(--lpmpc-green)',
+                                                    color: 'white',
+                                                    fontSize: '0.8rem',
+                                                    border: 'none'
+                                                }}
+                                            >
+                                                Close Report
+                                            </button>
                                         </div>
                                     </div>
                                 </div>
@@ -1518,22 +1833,48 @@ const checkInventoryAndSourcingAlerts = () => {
                         <div className={`admin-tab-content ${activeTab !== 'v-order' ? 'd-none' : ''}`}>
                             <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end gap-2 mb-4">
                                 <div>
-                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">ORDERS MANAGEMENT</h2>
-                                    <p className="text-muted m-0 small">Bulk decorticated fiber queue and leaf sourcing allocation</p>
+                                    <h2 className="fw-bold m-0 text-uppercase lpmpc-green fs-4 fs-md-2">
+                                        ORDERS MANAGEMENT
+                                    </h2>
+                                    <p className="text-muted m-0 small">
+                                        Bulk decorticated fiber queue and leaf sourcing allocation
+                                    </p>
                                 </div>
                                 <div className="date-display fw-bold text-uppercase small text-lpmpc">{dateStr}</div>
                             </div>
 
                             <div className="row g-3 mb-5">
                                 {[
-                                    { label: 'Pending / Sourcing Orders', count: isLoading ? '...' : String(pendingCount).padStart(2, '0'), color: '#468432' },
-                                    { label: 'Orders Processing', count: isLoading ? '...' : String(productionCount).padStart(2, '0'), color: '#b59a00' },
-                                    { label: 'Completed Deliveries', count: isLoading ? '...' : String(completedCount).padStart(2, '0'), color: '#6c757d' }
+                                    {
+                                        label: 'Pending / Sourcing Orders',
+                                        count: isLoading ? '...' : String(pendingCount).padStart(2, '0'),
+                                        color: '#468432'
+                                    },
+                                    {
+                                        label: 'Orders Processing',
+                                        count: isLoading ? '...' : String(productionCount).padStart(2, '0'),
+                                        color: '#b59a00'
+                                    },
+                                    {
+                                        label: 'Completed Deliveries',
+                                        count: isLoading ? '...' : String(completedCount).padStart(2, '0'),
+                                        color: '#6c757d'
+                                    }
                                 ].map((w, i) => (
                                     <div className="col-12 col-md-4" key={i}>
-                                        <div className="p-4 bg-white border border-light shadow-sm h-100 rounded-0 border-bottom border-3" style={{ borderBottomColor: w.color }}>
-                                            <div className="text-muted fw-bold text-uppercase mb-2" style={{ fontSize: '11px', letterSpacing: '0.5px' }}>{w.label}</div>
-                                            <h2 className="fw-bold m-0" style={{ fontSize: '32px', color: w.color }}>{w.count}</h2>
+                                        <div
+                                            className="p-4 bg-white border border-light shadow-sm h-100 rounded-0 border-bottom border-3"
+                                            style={{ borderBottomColor: w.color }}
+                                        >
+                                            <div
+                                                className="text-muted fw-bold text-uppercase mb-2"
+                                                style={{ fontSize: '11px', letterSpacing: '0.5px' }}
+                                            >
+                                                {w.label}
+                                            </div>
+                                            <h2 className="fw-bold m-0" style={{ fontSize: '32px', color: w.color }}>
+                                                {w.count}
+                                            </h2>
                                         </div>
                                     </div>
                                 ))}
@@ -1541,8 +1882,20 @@ const checkInventoryAndSourcingAlerts = () => {
 
                             {/* DYNAMIC PENDING ORDERS QUEUE */}
                             <div className="mb-4 mt-5 border-start border-4 border-warning ps-3">
-                                <h2 className="fw-bold m-0 text-uppercase" style={{ fontSize: '24px', letterSpacing: '1px', color: '#b59a00', fontFamily: "'Montserrat', sans-serif" }}>Pending Fiber Requests</h2>
-                                <p className="text-muted m-0 small">Incoming decorticated fiber orders requiring stock verification or farm sourcing</p>
+                                <h2
+                                    className="fw-bold m-0 text-uppercase"
+                                    style={{
+                                        fontSize: '24px',
+                                        letterSpacing: '1px',
+                                        color: '#b59a00',
+                                        fontFamily: "'Montserrat', sans-serif"
+                                    }}
+                                >
+                                    Pending Fiber Requests
+                                </h2>
+                                <p className="text-muted m-0 small">
+                                    Incoming decorticated fiber orders requiring stock verification or farm sourcing
+                                </p>
                             </div>
 
                             <div className="row g-4 mb-5">
@@ -1555,31 +1908,57 @@ const checkInventoryAndSourcingAlerts = () => {
 
                                         return (
                                             <div className="col-12" key={order.id}>
-                                                <div className="card border-0 shadow-sm rounded-0 bg-white border-top border-4" style={{ borderColor: isSourcing ? '#b59a00' : '#468432' }}>
+                                                <div
+                                                    className="card border-0 shadow-sm rounded-0 bg-white border-top border-4"
+                                                    style={{ borderColor: isSourcing ? '#b59a00' : '#468432' }}
+                                                >
                                                     <div className="card-body p-4">
                                                         <div className="row align-items-center g-3">
-
                                                             {/* CUSTOMER DETAILS */}
                                                             <div className="col-md-5">
                                                                 <div className="d-flex justify-content-between mb-1">
-                                                                    <span className="text-muted fw-bold small">REF: {order.id.slice(0, 8).toUpperCase()}</span>
-                                                                    <span className="badge bg-light text-dark border">{order.order_status}</span>
+                                                                    <span className="text-muted fw-bold small">
+                                                                        REF: {order.id.slice(0, 8).toUpperCase()}
+                                                                    </span>
+                                                                    <span className="badge bg-light text-dark border">
+                                                                        {order.order_status}
+                                                                    </span>
                                                                 </div>
-                                                                <h5 className="fw-bold text-uppercase mb-1" style={{ fontSize: '18px', color: '#1e1e24' }}>{order.customer_name}</h5>
-                                                                <p className="text-muted small mb-0">Contact: {order.contact_no || 'N/A'}</p>
-                                                                <p className="text-muted small mb-0">Address: {order.shipping_address || 'N/A'}</p>
+                                                                <h5
+                                                                    className="fw-bold text-uppercase mb-1"
+                                                                    style={{ fontSize: '18px', color: '#1e1e24' }}
+                                                                >
+                                                                    {order.customer_name}
+                                                                </h5>
+                                                                <p className="text-muted small mb-0">
+                                                                    Contact: {order.contact_no || 'N/A'}
+                                                                </p>
+                                                                <p className="text-muted small mb-0">
+                                                                    Address: {order.shipping_address || 'N/A'}
+                                                                </p>
                                                             </div>
 
                                                             {/* BULK FIBER SPECS */}
                                                             <div className="col-md-4">
-                                                                <div className="text-muted fw-bold text-uppercase mb-1" style={{ fontSize: '10px', letterSpacing: '0.5px' }}>Requested Fiber Specs</div>
+                                                                <div
+                                                                    className="text-muted fw-bold text-uppercase mb-1"
+                                                                    style={{ fontSize: '10px', letterSpacing: '0.5px' }}
+                                                                >
+                                                                    Requested Fiber Specs
+                                                                </div>
                                                                 <div className="d-flex justify-content-between small mb-1">
                                                                     <span className="text-muted">PNS Grade:</span>
-                                                                    <span className="fw-bold text-success">{primaryItem.fiber_type || 'PID-1'}</span>
+                                                                    <span className="fw-bold text-success">
+                                                                        {primaryItem.fiber_type || 'PID-1'}
+                                                                    </span>
                                                                 </div>
                                                                 <div className="d-flex justify-content-between small mb-1">
                                                                     <span className="text-muted">Bulk Weight:</span>
-                                                                    <span className="fw-bold">{primaryItem.fiber_weight ? `${primaryItem.fiber_weight} kg` : '1.0 kg'}</span>
+                                                                    <span className="fw-bold">
+                                                                        {primaryItem.fiber_weight
+                                                                            ? `${primaryItem.fiber_weight} kg`
+                                                                            : '1.0 kg'}
+                                                                    </span>
                                                                 </div>
                                                                 <div className="d-flex justify-content-between small">
                                                                     <span className="text-muted">Rate:</span>
@@ -1589,16 +1968,25 @@ const checkInventoryAndSourcingAlerts = () => {
 
                                                             {/* PRICING & ACTIONS */}
                                                             <div className="col-md-3 text-md-end border-start ps-md-4">
-                                                                <span className="text-muted fw-bold d-block" style={{ fontSize: '10px' }}>TOTAL PRICE</span>
+                                                                <span className="text-muted fw-bold d-block" style={{ fontSize: '10px' }}>
+                                                                    TOTAL PRICE
+                                                                </span>
                                                                 <h3 className="fw-bold mb-3" style={{ fontSize: '22px', color: '#468432' }}>
-                                                                    ₱{Number(order.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                    ₱
+                                                                    {Number(order.total_amount).toLocaleString(undefined, {
+                                                                        minimumFractionDigits: 2
+                                                                    })}
                                                                 </h3>
 
                                                                 <div className="d-grid gap-2">
                                                                     <button
                                                                         onClick={() => handleApproveOrder(order)}
                                                                         className="btn btn-success btn-sm rounded-0 fw-bold py-2 text-uppercase"
-                                                                        style={{ backgroundColor: '#468432', border: 'none', fontSize: '11px' }}
+                                                                        style={{
+                                                                            backgroundColor: '#468432',
+                                                                            border: 'none',
+                                                                            fontSize: '11px'
+                                                                        }}
                                                                     >
                                                                         Verify & Approve Order
                                                                     </button>
@@ -1611,7 +1999,6 @@ const checkInventoryAndSourcingAlerts = () => {
                                                                     </button>
                                                                 </div>
                                                             </div>
-
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1628,7 +2015,9 @@ const checkInventoryAndSourcingAlerts = () => {
                             {/* ACTIVE ORDER QUEUE GRID */}
                             <div className="card border-0 shadow-sm rounded-0 bg-white">
                                 <div className="card-header bg-white py-3 border-bottom border-light">
-                                    <h6 className="m-0 fw-bold lpmpc-green text-uppercase" style={{ letterSpacing: '0.5px' }}>Active Fiber Order Queue</h6>
+                                    <h6 className="m-0 fw-bold lpmpc-green text-uppercase" style={{ letterSpacing: '0.5px' }}>
+                                        Active Fiber Order Queue
+                                    </h6>
                                 </div>
                                 <div className="card-body p-0">
                                     {isLoading ? (
@@ -1657,18 +2046,28 @@ const checkInventoryAndSourcingAlerts = () => {
                                                                         REF-{order.id.slice(0, 5).toUpperCase()}
                                                                     </td>
                                                                     <td className="py-3">
-                                                                        <div className="fw-bold text-uppercase text-dark" style={{ fontSize: '14px' }}>{order.customer_name}</div>
+                                                                        <div className="fw-bold text-uppercase text-dark" style={{ fontSize: '14px' }}>
+                                                                            {order.customer_name}
+                                                                        </div>
                                                                     </td>
                                                                     <td className="py-3">
-                                                                        <span className="badge bg-light text-success border rounded-pill px-3 py-2 fw-bold" style={{ fontSize: '12px' }}>
+                                                                        <span
+                                                                            className="badge bg-light text-success border rounded-pill px-3 py-2 fw-bold"
+                                                                            style={{ fontSize: '12px' }}
+                                                                        >
                                                                             {itemRow.fiber_type || 'PID-1'}
                                                                         </span>
                                                                     </td>
-                                                                    <td className="py-3 fw-bold">
-                                                                        {itemRow.fiber_weight || '1.0'} kg
-                                                                    </td>
-                                                                    <td className="fw-bold text-success py-3" style={{ color: '#468432', fontSize: '14px' }}>
-                                                                        ₱{Number(order.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                    <td className="py-3 fw-bold">{itemRow.fiber_weight || '1.0'} kg</td>
+                                                                    <td
+                                                                        className="fw-bold text-success py-3"
+                                                                        style={{ color: '#468432', fontSize: '14px' }}
+                                                                    >
+                                                                        ₱
+                                                                        {Number(order.total_amount).toLocaleString(undefined, {
+                                                                            minimumFractionDigits: 2,
+                                                                            maximumFractionDigits: 2
+                                                                        })}
                                                                     </td>
                                                                     <td className="py-3">
                                                                         <select
@@ -1692,9 +2091,13 @@ const checkInventoryAndSourcingAlerts = () => {
                                                                                 title="View details"
                                                                                 style={{ background: 'none', border: 'none', padding: 0 }}
                                                                             >
-                                                                                <span className="material-symbols-outlined align-middle" style={{ fontSize: '20px' }}>visibility</span>
+                                                                                <span
+                                                                                    className="material-symbols-outlined align-middle"
+                                                                                    style={{ fontSize: '20px' }}
+                                                                                >
+                                                                                    visibility
+                                                                                </span>
                                                                             </button>
-
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={(e) => {
@@ -1708,7 +2111,12 @@ const checkInventoryAndSourcingAlerts = () => {
                                                                                 title="Cancel order"
                                                                                 style={{ background: 'none', border: 'none', padding: 0 }}
                                                                             >
-                                                                                <span className="material-symbols-outlined align-middle" style={{ fontSize: '20px' }}>cancel</span>
+                                                                                <span
+                                                                                    className="material-symbols-outlined align-middle"
+                                                                                    style={{ fontSize: '20px' }}
+                                                                                >
+                                                                                    cancel
+                                                                                </span>
                                                                             </button>
                                                                         </div>
                                                                     </td>
@@ -1742,14 +2150,36 @@ const checkInventoryAndSourcingAlerts = () => {
 
                             <div className="row g-3 mb-4">
                                 {[
-                                    { label: 'Total Revenue (Paid)', count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`, color: '#468432' },
-                                    { label: 'Pending Receivables', count: isLoading ? '...' : `₱${totalUnpaidAmount.toLocaleString()}`, color: '#b59a00' },
-                                    { label: 'Total Orders', count: isLoading ? '...' : String(totalSalesOrdersCount).padStart(2, '0'), color: '#6c757d' }
+                                    {
+                                        label: 'Total Revenue (Paid)',
+                                        count: isLoading ? '...' : `₱${totalPaidAmount.toLocaleString()}`,
+                                        color: '#468432'
+                                    },
+                                    {
+                                        label: 'Pending Receivables',
+                                        count: isLoading ? '...' : `₱${totalUnpaidAmount.toLocaleString()}`,
+                                        color: '#b59a00'
+                                    },
+                                    {
+                                        label: 'Total Orders',
+                                        count: isLoading ? '...' : String(totalSalesOrdersCount).padStart(2, '0'),
+                                        color: '#6c757d'
+                                    }
                                 ].map((w, i) => (
                                     <div className="col-12 col-sm-4" key={i}>
-                                        <div className="p-4 bg-white border border-light shadow-sm h-100 rounded-0 border-bottom border-3" style={{ borderBottom: `3px solid ${w.color}` }}>
-                                            <div className="text-muted fw-bold text-uppercase mb-2" style={{ fontSize: '11px', letterSpacing: '0.5px' }}>{w.label}</div>
-                                            <h2 className="fw-bold m-0" style={{ fontSize: '32px', color: w.color }}>{w.count}</h2>
+                                        <div
+                                            className="p-4 bg-white border border-light shadow-sm h-100 rounded-0 border-bottom border-3"
+                                            style={{ borderBottom: `3px solid ${w.color}` }}
+                                        >
+                                            <div
+                                                className="text-muted fw-bold text-uppercase mb-2"
+                                                style={{ fontSize: '11px', letterSpacing: '0.5px' }}
+                                            >
+                                                {w.label}
+                                            </div>
+                                            <h2 className="fw-bold m-0" style={{ fontSize: '32px', color: w.color }}>
+                                                {w.count}
+                                            </h2>
                                         </div>
                                     </div>
                                 ))}
@@ -1765,7 +2195,8 @@ const checkInventoryAndSourcingAlerts = () => {
                                             backgroundColor: salesView === 'paid' ? '#468432' : '#f8f9fa',
                                             color: salesView === 'paid' ? '#fff' : '#6c757d',
                                             transition: '0.3s'
-                                        }}>
+                                        }}
+                                    >
                                         Paid Transactions
                                     </button>
                                     <button
@@ -1776,7 +2207,8 @@ const checkInventoryAndSourcingAlerts = () => {
                                             backgroundColor: salesView === 'unpaid' ? '#b59a00' : '#f8f9fa',
                                             color: salesView === 'unpaid' ? '#fff' : '#6c757d',
                                             transition: '0.3s'
-                                        }}>
+                                        }}
+                                    >
                                         Unpaid / Pending
                                     </button>
                                 </div>
@@ -1784,131 +2216,191 @@ const checkInventoryAndSourcingAlerts = () => {
 
                             <div className="bg-white border shadow-sm rounded-0 overflow-hidden">
                                 {salesView === 'paid' ? (
-                                    <div>
-                                        <div className="table-responsive">
-                                            <table className="table table-hover align-middle mb-0" style={{ fontSize: '14px' }}>
-                                                <thead className="bg-light text-muted" style={{ fontSize: '11px' }}>
+                                    <div className="table-responsive">
+                                        <table className="table table-hover align-middle mb-0" style={{ fontSize: '14px' }}>
+                                            <thead className="bg-light text-muted" style={{ fontSize: '11px' }}>
+                                                <tr>
+                                                    <th className="py-3 px-4 border-0">Order ID</th>
+                                                    <th className="py-3 border-0">Date</th>
+                                                    <th className="py-3 border-0">Customer</th>
+                                                    <th className="py-3 text-end px-4 border-0">Amount Paid</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {isLoading ? (
                                                     <tr>
-                                                        <th className="py-3 px-4 border-0">Order ID</th>
-                                                        <th className="py-3 border-0">Date</th>
-                                                        <th className="py-3 border-0">Customer</th>
-                                                        <th className="py-3 text-end px-4 border-0">Amount Paid</th>
+                                                        <td colSpan="4" className="text-center py-4 text-muted small">
+                                                            Loading transactions...
+                                                        </td>
                                                     </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {isLoading ? (
-                                                        <tr>
-                                                            <td colSpan="4" className="text-center py-4 text-muted small">Loading transactions...</td>
+                                                ) : paidOrders.length > 0 ? (
+                                                    paidOrders.map((sale) => (
+                                                        <tr key={sale.id} className="border-bottom">
+                                                            <td className="fw-bold px-4 py-3">
+                                                                REF-{sale.id.slice(0, 5).toUpperCase()}
+                                                            </td>
+                                                            <td className="text-muted">
+                                                                {new Date(sale.created_at).toLocaleDateString('en-US', {
+                                                                    month: 'short',
+                                                                    day: '2-digit',
+                                                                    year: 'numeric'
+                                                                })}
+                                                            </td>
+                                                            <td>{sale.customer_name}</td>
+                                                            <td
+                                                                className="text-end fw-bold px-4 py-3 text-success"
+                                                                style={{ color: '#468432' }}
+                                                            >
+                                                                ₱
+                                                                {Number(sale.total_amount).toLocaleString(undefined, {
+                                                                    minimumFractionDigits: 2,
+                                                                    maximumFractionDigits: 2
+                                                                })}
+                                                            </td>
                                                         </tr>
-                                                    ) : paidOrders.length > 0 ? (
-                                                        paidOrders.map((sale) => (
-                                                            <tr key={sale.id} className="border-bottom">
-                                                                <td className="fw-bold px-4 py-3">REF-{sale.id.slice(0, 5).toUpperCase()}</td>
-                                                                <td className="text-muted">{new Date(sale.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
-                                                                <td>{sale.customer_name}</td>
-                                                                <td className="text-end fw-bold px-4 py-3 text-success" style={{ color: '#468432' }}>₱{Number(sale.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                                            </tr>
-                                                        ))
-                                                    ) : (
-                                                        <tr>
-                                                            <td colSpan="4" className="text-center py-4 text-muted small">No paid transactions recorded.</td>
-                                                        </tr>
-                                                    )}
-                                                </tbody>
-                                            </table>
-                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <tr>
+                                                        <td colSpan="4" className="text-center py-4 text-muted small">
+                                                            No paid transactions recorded.
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 ) : (
-                                    <div>
-                                        <div className="table-responsive">
-                                            <table className="table table-hover align-middle mb-0" style={{ fontSize: '14px' }}>
-                                                <thead className="bg-light text-muted" style={{ fontSize: '11px' }}>
+                                    <div className="table-responsive">
+                                        <table className="table table-hover align-middle mb-0" style={{ fontSize: '14px' }}>
+                                            <thead className="bg-light text-muted" style={{ fontSize: '11px' }}>
+                                                <tr>
+                                                    <th className="py-3 px-4 border-0">Order ID</th>
+                                                    <th className="py-3 border-0">Date</th>
+                                                    <th className="py-3 border-0">Customer</th>
+                                                    <th className="py-3 border-0">Status</th>
+                                                    <th className="py-3 text-end px-4 border-0">Balance Due</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {isLoading ? (
                                                     <tr>
-                                                        <th className="py-3 px-4 border-0">Order ID</th>
-                                                        <th className="py-3 border-0">Date</th>
-                                                        <th className="py-3 border-0">Customer</th>
-                                                        <th className="py-3 border-0">Status</th>
-                                                        <th className="py-3 text-end px-4 border-0">Balance Due</th>
+                                                        <td colSpan="5" className="text-center py-4 text-muted small">
+                                                            Loading transactions...
+                                                        </td>
                                                     </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {isLoading ? (
-                                                        <tr>
-                                                            <td colSpan="5" className="text-center py-4 text-muted small">Loading transactions...</td>
+                                                ) : unpaidOrders.length > 0 ? (
+                                                    unpaidOrders.map((sale) => (
+                                                        <tr key={sale.id} className="border-bottom">
+                                                            <td className="fw-bold px-4 py-3">
+                                                                REF-{sale.id.slice(0, 5).toUpperCase()}
+                                                            </td>
+                                                            <td className="text-muted">
+                                                                {new Date(sale.created_at).toLocaleDateString('en-US', {
+                                                                    month: 'short',
+                                                                    day: '2-digit',
+                                                                    year: 'numeric'
+                                                                })}
+                                                            </td>
+                                                            <td>{sale.customer_name}</td>
+                                                            <td>
+                                                                <span
+                                                                    className="badge rounded-pill fw-normal border px-3"
+                                                                    style={{
+                                                                        backgroundColor: '#fff9e6',
+                                                                        color: '#b59a00',
+                                                                        borderColor: '#ffeeba'
+                                                                    }}
+                                                                >
+                                                                    {sale.order_status}
+                                                                </span>
+                                                            </td>
+                                                            <td className="text-end fw-bold px-4 py-3 text-danger">
+                                                                ₱
+                                                                {Number(sale.total_amount).toLocaleString(undefined, {
+                                                                    minimumFractionDigits: 2,
+                                                                    maximumFractionDigits: 2
+                                                                })}
+                                                            </td>
                                                         </tr>
-                                                    ) : unpaidOrders.length > 0 ? (
-                                                        unpaidOrders.map((sale) => (
-                                                            <tr key={sale.id} className="border-bottom">
-                                                                <td className="fw-bold px-4 py-3">REF-{sale.id.slice(0, 5).toUpperCase()}</td>
-                                                                <td className="text-muted">{new Date(sale.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
-                                                                <td>{sale.customer_name}</td>
-                                                                <td>
-                                                                    <span className="badge rounded-pill fw-normal border px-3" style={{ backgroundColor: '#fff9e6', color: '#b59a00', borderColor: '#ffeeba' }}>
-                                                                        {sale.order_status}
-                                                                    </span>
-                                                                </td>
-                                                                <td className="text-end fw-bold px-4 py-3 text-danger">₱{Number(sale.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                                            </tr>
-                                                        ))
-                                                    ) : (
-                                                        <tr>
-                                                            <td colSpan="5" className="text-center py-4 text-muted small">No unpaid transactions pending.</td>
-                                                        </tr>
-                                                    )}
-                                                </tbody>
-                                            </table>
-                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <tr>
+                                                        <td colSpan="5" className="text-center py-4 text-muted small">
+                                                            No unpaid transactions pending.
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 )}
                             </div>
                         </div>
-
                     </main>
                 </div>
             </div>
 
-            <style dangerouslySetInnerHTML={{ __html: `
-                 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&display=swap');
-                 .lpmpc-green { color: #468432 !important; }
-                 .bg-lpmpc-green { background-color: #468432 !important; }
-                 .card { transition: transform 0.2s ease; }
-                 .card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important; }
-                 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-                 .text-lpmpc { color: #468432; }
-                 .table-sm td, .table-sm th { padding: 0.5rem; }
+            <style
+                dangerouslySetInnerHTML={{
+                    __html: `
+                        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&display=swap');
+                        .lpmpc-green { color: #468432 !important; }
+                        .bg-lpmpc-green { background-color: #468432 !important; }
+                        .card { transition: transform 0.2s ease; }
+                        .card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important; }
+                        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+                        .text-lpmpc { color: #468432; }
+                        .table-sm td, .table-sm th { padding: 0.5rem; }
 
-                 .vis-item.bar-veg {
-                      background-color: #28a745 !important;
-                      border-color: #1e7e34 !important;
-                      color: #ffffff !important;
-                      font-weight: bold !important;
-                  }
-                  .vis-item.bar-flow {
-                      background-color: #e83e8c !important;
-                      border-color: #d63384 !important;
-                      color: #ffffff !important;
-                  }
-                 .vis-item.bar-maturation {
-                     background-color: #ffc107 !important;
-                     border-color: #d39e00 !important;
-                     color: #000000 !important;
-                     font-weight: bold !important;
-                 }
-                 .vis-item {
-                     border-radius: 4px !important;
-                     padding: 6px !important;
-                     font-size: 13px !important;
-                 }
-                 .vis-label {
-                     font-weight: 600 !important;
-                     color: #212529 !important;
-                 }
-            `}} />
+                        .vis-item.bar-veg {
+                            background-color: #28a745 !important;
+                            border-color: #1e7e34 !important;
+                            color: #ffffff !important;
+                            font-weight: bold !important;
+                        }
+                        .vis-item.bar-flow {
+                            background-color: #e83e8c !important;
+                            border-color: #d63384 !important;
+                            color: #ffffff !important;
+                        }
+                        .vis-item.bar-maturation {
+                            background-color: #ffc107 !important;
+                            border-color: #d39e00 !important;
+                            color: #000000 !important;
+                            font-weight: bold !important;
+                        }
+                        .vis-item {
+                            border-radius: 4px !important;
+                            padding: 6px !important;
+                            font-size: 13px !important;
+                        }
+                        .vis-label {
+                            font-weight: 600 !important;
+                            color: #212529 !important;
+                        }
+                    `
+                }}
+            />
 
             {/* FULL MESSAGES INBOX POPUP MODAL */}
             {showInboxModal && (
-                <div className="modal-backdrop d-flex align-items-center justify-content-center p-3" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 2040, backdropFilter: 'blur(3px)' }}>
-                    <div className="card border-0 rounded-4 shadow-lg w-100" style={{ maxWidth: '850px', background: '#ffffff', maxHeight: '85vh', overflow: 'hidden' }}>
+                <div
+                    className="modal-backdrop d-flex align-items-center justify-content-center p-3"
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        width: '100vw',
+                        height: '100vh',
+                        backgroundColor: 'rgba(0,0,0,0.6)',
+                        zIndex: 2040,
+                        backdropFilter: 'blur(3px)'
+                    }}
+                >
+                    <div
+                        className="card border-0 rounded-4 shadow-lg w-100"
+                        style={{ maxWidth: '850px', background: '#ffffff', maxHeight: '85vh', overflowY: 'hidden' }}
+                    >
                         <div className="card-header bg-lpmpc-green text-white p-4 d-flex justify-content-between align-items-center">
                             <div>
                                 <h5 className="fw-bold m-0 text-uppercase d-flex align-items-center" style={{ fontSize: '1.1rem' }}>
@@ -1933,22 +2425,37 @@ const checkInventoryAndSourcingAlerts = () => {
                                     <tbody>
                                         {messages.length > 0 ? (
                                             messages.map((msg) => (
-                                                <tr key={msg.id} className={msg.status === 'Unread' ? 'fw-bold bg-light-subtle' : ''}>
+                                                <tr
+                                                    key={msg.id}
+                                                    className={msg.status === 'Unread' ? 'fw-bold bg-light-subtle' : ''}
+                                                >
                                                     <td className="ps-4 py-3">
                                                         <div>{msg.sender_name}</div>
                                                         <small className="text-muted fw-normal">{msg.sender_email}</small>
                                                     </td>
-                                                    <td className="py-3 text-dark">{msg.subject}</td>
-                                                    <td className="py-3 text-muted small">{new Date(msg.created_at).toLocaleDateString()} {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                                                    <td className="text-dark">{msg.subject}</td>
+                                                    <td className="py-3 text-muted small">
+                                                        {new Date(msg.created_at).toLocaleDateString()}{' '}
+                                                        {new Date(msg.created_at).toLocaleTimeString([], {
+                                                            hour: '2-digit',
+                                                            minute: '2-digit'
+                                                        })}
+                                                    </td>
                                                     <td className="py-3">
-                                                        <span className={`badge rounded-pill ${msg.status === 'Unread' ? 'bg-danger' : 'bg-secondary'}`}>
+                                                        <span
+                                                            className={`badge rounded-pill ${
+                                                                msg.status === 'Unread' ? 'bg-danger' : 'bg-secondary'
+                                                            }`}
+                                                        >
                                                             {msg.status}
                                                         </span>
                                                     </td>
                                                     <td className="text-center pe-4 py-3">
                                                         <button
-                                                            className="btn btn-sm btn-success fw-bold rounded-pill px-3"
-                                                            onClick={() => handleReadMessage(msg)}
+                                                            className="btn btn-sm btn-outline-success rounded-pill px-3 py-1 fw-bold"
+                                                            onClick={() => {
+                                                                handleReadMessage(msg);
+                                                            }}
                                                         >
                                                             Read Content
                                                         </button>
@@ -1957,7 +2464,9 @@ const checkInventoryAndSourcingAlerts = () => {
                                             ))
                                         ) : (
                                             <tr>
-                                                <td colSpan="5" className="text-center py-5 text-muted">No messages found in database inbox.</td>
+                                                <td colSpan="5" className="text-center py-5 text-muted">
+                                                    No messages found in database inbox.
+                                                </td>
                                             </tr>
                                         )}
                                     </tbody>
@@ -1970,23 +2479,49 @@ const checkInventoryAndSourcingAlerts = () => {
 
             {/* SINGLE MESSAGE DETAIL PREVIEW MODAL */}
             {selectedMsg && (
-                <div className="modal-backdrop d-flex align-items-center justify-content-center p-3" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 2060 }}>
+                <div
+                    className="modal-backdrop d-flex align-items-center justify-content-center p-3"
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        width: '100vw',
+                        height: '100vh',
+                        backgroundColor: 'rgba(0,0,0,0.7)',
+                        zIndex: 2060
+                    }}
+                >
                     <div className="card border-0 rounded-4 shadow-lg w-100" style={{ maxWidth: '600px', background: '#ffffff' }}>
                         <div className="card-header bg-lpmpc-green text-white p-4 d-flex justify-content-between align-items-center rounded-top-4">
                             <div>
-                                <h5 className="fw-bold m-0 text-uppercase" style={{ fontSize: '1rem' }}>{selectedMsg.subject}</h5>
-                                <small className="opacity-75">From: {selectedMsg.sender_name} ({selectedMsg.sender_email})</small>
+                                <h5 className="fw-bold m-0 text-uppercase" style={{ fontSize: '1rem' }}>
+                                    {selectedMsg.subject}
+                                </h5>
+                                <small className="opacity-75">
+                                    From: {selectedMsg.sender_name} ({selectedMsg.sender_email})
+                                </small>
                             </div>
                             <button className="btn-close btn-close-white" onClick={() => setSelectedMsg(null)}></button>
                         </div>
                         <div className="card-body p-4">
-                            <p className="text-muted small mb-3">Received on {new Date(selectedMsg.created_at).toLocaleString()}</p>
-                            <div className="p-3 bg-light rounded-3 border mb-4" style={{ minHeight: '140px', whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                            <p className="text-muted small mb-3">
+                                Received on {new Date(selectedMsg.created_at).toLocaleString()}
+                            </p>
+                            <div
+                                className="p-3 bg-light rounded-3 border mb-4"
+                                style={{ minHeight: '140px', whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}
+                            >
                                 {selectedMsg.message}
                             </div>
                             <div className="d-flex justify-content-between align-items-center">
-                                <a href={`mailto:${selectedMsg.sender_email}?subject=RE: ${selectedMsg.subject}`} className="btn btn-success fw-bold px-4 rounded-pill">
-                                    <span className="material-symbols-outlined align-middle me-1" style={{ fontSize: '1.1rem' }}>reply</span> Reply via Email
+                                <a
+                                    href={`mailto:${selectedMsg.sender_email}?subject=RE: ${selectedMsg.subject}`}
+                                    className="btn btn-success fw-bold px-4 rounded-pill"
+                                >
+                                    <span className="material-symbols-outlined align-middle me-1" style={{ fontSize: '1.1rem' }}>
+                                        reply
+                                    </span>{' '}
+                                    Reply via Email
                                 </a>
                                 <button className="btn btn-secondary fw-bold px-4 rounded-pill" onClick={() => setSelectedMsg(null)}>
                                     Close
@@ -2012,7 +2547,13 @@ const checkInventoryAndSourcingAlerts = () => {
                                     </small>
                                 )}
                             </div>
-                            <button type="button" className="btn-close btn-close-white shadow-none" data-bs-dismiss="modal" aria-label="Close" onClick={() => setSelectedOrder(null)}></button>
+                            <button
+                                type="button"
+                                className="btn-close btn-close-white shadow-none"
+                                data-bs-dismiss="modal"
+                                aria-label="Close"
+                                onClick={() => setSelectedOrder(null)}
+                            ></button>
                         </div>
 
                         <div className="modal-body p-4 bg-light">
@@ -2026,16 +2567,26 @@ const checkInventoryAndSourcingAlerts = () => {
                                                 </h6>
                                                 <div className="row g-2" style={{ fontSize: '13px' }}>
                                                     <div className="col-4 text-muted">Customer Name:</div>
-                                                    <div className="col-8 fw-bold text-uppercase text-dark">{selectedOrder.customer_name}</div>
+                                                    <div className="col-8 fw-bold text-uppercase text-dark">
+                                                        {selectedOrder.customer_name}
+                                                    </div>
 
                                                     <div className="col-4 text-muted">Contact Number:</div>
-                                                    <div className="col-8 fw-medium">{selectedOrder.contact_no || 'No Contact Provided'}</div>
+                                                    <div className="col-8 fw-medium">
+                                                        {selectedOrder.contact_no || 'No Contact Provided'}
+                                                    </div>
 
                                                     <div className="col-4 text-muted">Shipping Address:</div>
-                                                    <div className="col-8 text-secondary fw-normal">{selectedOrder.shipping_address || 'No Address Logged'}</div>
+                                                    <div className="col-8 text-secondary fw-normal">
+                                                        {selectedOrder.shipping_address || 'No Address Logged'}
+                                                    </div>
 
                                                     <div className="col-4 text-muted">Delivery Method:</div>
-                                                    <div className="col-8"><span className="badge bg-light text-dark border fw-semibold">{selectedOrder.delivery_method || 'Standard'}</span></div>
+                                                    <div className="col-8">
+                                                        <span className="badge bg-light text-dark border fw-semibold">
+                                                            {selectedOrder.delivery_method || 'Standard'}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                             </div>
 
@@ -2059,7 +2610,12 @@ const checkInventoryAndSourcingAlerts = () => {
                                                                     <td className="fw-bold text-success">{item.item_name}</td>
                                                                     <td className="text-center">{item.fiber_weight} kg</td>
                                                                     <td className="text-center">₱{item.unit_price} / kg</td>
-                                                                    <td className="text-end fw-bold">₱{(item.fiber_weight * item.unit_price).toLocaleString()}</td>
+                                                                    <td className="text-end fw-bold">
+                                                                        ₱
+                                                                        {(
+                                                                            Number(item.fiber_weight || 0) * Number(item.unit_price || 0)
+                                                                        ).toLocaleString()}
+                                                                    </td>
                                                                 </tr>
                                                             ))}
                                                         </tbody>
@@ -2131,7 +2687,11 @@ const checkInventoryAndSourcingAlerts = () => {
                                     <label className="small fw-bold text-muted">PASSWORD</label>
                                     <input type="password" name="password" className="form-control rounded-0" required />
                                 </div>
-                                <button type="submit" className="btn w-100 rounded-0 text-white fw-bold" style={{ backgroundColor: '#468432' }}>
+                                <button
+                                    type="submit"
+                                    className="btn w-100 rounded-0 text-white fw-bold"
+                                    style={{ backgroundColor: '#468432' }}
+                                >
                                     CREATE FARMER ACCOUNT
                                 </button>
                             </form>
@@ -2139,7 +2699,6 @@ const checkInventoryAndSourcingAlerts = () => {
                     </div>
                 </div>
             </div>
-
         </div>
     );
 };
